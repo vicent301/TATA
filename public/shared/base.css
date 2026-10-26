@@ -1,0 +1,49 @@
+/* Tema de Tata: crema, tinta y ámbar (el mismo del prototipo del Demo Day). */
+:root{
+  --cream:#EFE8DC; --paper:#F8F4EC; --ink:#151412; --ink-2:#2B2825; --muted:#6B6359; --line:#DBD1C2;
+  --amber:#F0A040; --amber-deep:#9C5410; --red:#D3362A; --red-soft:#FBE3DF; --green:#2F7D4B; --green-soft:#E1F0E4; --amber-soft:#FBEBD2;
+  --fabric:#CDB494; --fabric-2:#B3966F; --wood:#C27A3A; --wood-2:#8E5222; --glow:#FFC46A; --ring:#FFC46A;
+  --display:'Anton','Impact','Arial Narrow Bold',sans-serif;
+  --body:'DM Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'DM Mono',ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--cream);color:var(--ink)}
+body{font-family:var(--body);font-size:16px;line-height:1.45;-webkit-tap-highlight-color:transparent}
+button{font:inherit;cursor:pointer;color:inherit}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
+a{color:var(--amber-deep)}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--amber-deep)}
+.display{font-family:var(--display);font-weight:400;letter-spacing:.01em;line-height:.95}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);border-radius:999px;padding:10px 16px;font-weight:500;font-size:15px;text-decoration:none;white-space:nowrap}
+.btn:hover{background:rgba(21,20,18,.06)}
+.btn.primary{background:var(--ink);color:var(--cream)}
+.btn.primary:hover{background:var(--ink-2)}
+.btn.danger{border-color:var(--red);color:var(--red)}
+.btn.small{padding:6px 12px;font-size:13px}
+.btn:disabled{opacity:.5;cursor:default}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:16px}
+.form{display:flex;flex-direction:column;gap:10px}
+.form label{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+.form .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+input,select,textarea{font:inherit;font-size:16px;border:1.5px solid var(--line);border-radius:12px;padding:9px 11px;background:#fff;color:var(--ink);min-width:0;width:100%}
+.hint{font-size:13px;color:var(--muted);margin:0}
+.err{color:var(--red);font-size:14px;margin:0}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+
+/* El parlante (también se usa como logo) */
+.tata{position:relative;width:250px;height:196px;max-width:100%}
+.tata .body{position:absolute;inset:32px 0 0 0;border-radius:46% 46% 44% 44% / 30% 30% 70% 70%;overflow:hidden;
+  background:repeating-linear-gradient(45deg,rgba(255,255,255,.08) 0 2px,transparent 2px 4px),repeating-linear-gradient(-45deg,rgba(60,35,10,.07) 0 2px,transparent 2px 4px),radial-gradient(120% 95% at 35% 18%,#E2CDAE,var(--fabric) 52%,var(--fabric-2));
+  box-shadow:inset -16px -12px 30px rgba(80,50,20,.22)}
+.tata .wood{position:absolute;left:0;right:0;bottom:0;height:36px;background:linear-gradient(180deg,#D08A47,var(--wood) 40%,var(--wood-2));border-top:1px solid rgba(0,0,0,.12)}
+.tata .eye{position:absolute;top:58px;width:40px;height:21px;border:5px solid var(--glow);border-bottom:0;border-radius:40px 40px 0 0;filter:drop-shadow(0 0 6px var(--glow)) drop-shadow(0 0 2px var(--glow));transition:border-color .3s,filter .3s,transform .3s}
+.tata .eye.l{left:58px}.tata .eye.r{right:58px}
+.tata .cap{position:absolute;left:16px;right:16px;top:10px;height:60px;border-radius:50%;background:radial-gradient(90% 120% at 40% 30%,#F7F0E4,#E2D6C2);box-shadow:0 3px 0 #C9B9A0,inset 0 -3px 8px rgba(0,0,0,.08)}
+.tata[data-mode="listening"] .eye{transform:scale(1.1)}
+.tata[data-mode="speaking"] .eye{animation:talk .5s ease-in-out infinite alternate}
+.tata[data-mode="alert"]{--glow:#FF6B5A}
+.tata[data-mode="sleep"] .eye{border-color:#B9A88E;filter:none;height:6px}
+@keyframes talk{to{transform:translateY(-3px) scaleY(.82)}}

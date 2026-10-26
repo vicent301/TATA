@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Tata</title>
+<meta name="theme-color" content="#EFE8DC">
+<link rel="icon" href="/shared/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/shared/base.css">
+<style>
+.wrap{max-width:980px;margin:0 auto;padding:24px max(16px,env(safe-area-inset-left)) 48px;display:flex;flex-direction:column;gap:28px}
+.hero{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:28px;align-items:center}
+.hero h1{font-size:clamp(72px,14vw,140px);margin:6px 0 10px}
+.hero p.lead{font-size:19px;color:var(--ink-2);margin:0 0 8px;max-width:38ch}
+.device{display:flex;justify-content:center}
+.paths{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.paths h2{font-size:22px;margin:4px 0 6px}
+.paths p{margin:0 0 12px;color:var(--ink-2)}
+ol.how{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;color:var(--ink-2)}
+@media (max-width:720px){.hero{grid-template-columns:1fr}.device{order:-1}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="hero">
+    <div>
+      <span class="eyebrow">Compañía por voz para personas mayores</span>
+      <h1 class="display">TATA</h1>
+      <p class="lead">Tu familiar solo habla. La familia arma todo desde el celular: remedios, turnos, contactos y avisos.</p>
+      <p class="hint">Tata le recuerda la pastilla, le avisa de sus turnos, le pasa tus mensajes y te avisa si pide ayuda o si a la mañana no habló con nadie.</p>
+    </div>
+    <div class="device"><div class="tata" data-mode="idle" aria-hidden="true"><div class="body"><div class="eye l"></div><div class="eye r"></div><div class="wood"></div></div><div class="cap"></div></div></div>
+  </section>
+
+  <section class="paths">
+    <div class="card" id="mine" hidden>
+      <span class="eyebrow">Ya tenés un hogar</span>
+      <h2>Seguir en la app de la familia</h2>
+      <p>Este celular ya está conectado.</p>
+      <a class="btn primary" href="/familia/">Abrir</a>
+    </div>
+
+    <form class="card form" id="create">
+      <span class="eyebrow">Soy de la familia</span>
+      <h2 style="margin:0">Crear el hogar</h2>
+      <div class="two">
+        <label>Tu nombre<input name="memberName" required maxlength="60" placeholder="Laura" autocomplete="given-name"></label>
+        <label>Qué sos de ella o él<input name="relation" maxlength="40" placeholder="hija"></label>
+      </div>
+      <label>Cómo le dice Tata a tu familiar<input name="elderName" required maxlength="60" placeholder="Elsa"></label>
+      <label>Tu teléfono (opcional, para que pueda llamarte)<input name="phone" type="tel" maxlength="30" placeholder="+54 9 351 555 1234"></label>
+      <label>Zona horaria de su casa<select name="timezone" id="tz"></select></label>
+      <p class="err" id="err" hidden></p>
+      <button class="btn primary" type="submit">Crear hogar</button>
+    </form>
+
+    <div class="card">
+      <span class="eyebrow">Es el dispositivo de la casa</span>
+      <h2>Configurar Tata</h2>
+      <p>Abrí esta página en la tablet o el celular que queda en casa de tu familiar, enchufado y con wifi.</p>
+      <ol class="how">
+        <li>Creá el hogar desde tu celular.</li>
+        <li>En <b>Ajustes</b> vas a ver un código de 6 números.</li>
+        <li>En la tablet, entrá a <b>Configurar Tata</b> y escribí el código.</li>
+      </ol>
+      <p style="margin-top:12px"><a class="btn" href="/casa/">Configurar Tata</a></p>
+    </div>
+  </section>
+</div>
+<script>
+const tzs = ['America/Argentina/Cordoba','America/Argentina/Buenos_Aires','America/Argentina/Mendoza','America/Argentina/Salta','America/Argentina/Ushuaia','America/Montevideo','America/Santiago','America/Asuncion','America/La_Paz','America/Lima','America/Bogota','America/Mexico_City','Europe/Madrid'];
+const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+if (local && !tzs.includes(local)) tzs.unshift(local);
+const sel = document.getElementById('tz');
+sel.innerHTML = tzs.map(z => `<option value="${z}">${z.split('/').pop().replace(/_/g,' ')}</option>`).join('');
+sel.value = tzs.includes('America/Argentina/Cordoba') && local?.startsWith('America/Argentina') ? 'America/Argentina/Cordoba' : (local || tzs[0]);
+try { if (localStorage.getItem('tata.member')) document.getElementById('mine').hidden = false; } catch {}
+
+document.getElementById('create').addEventListener('submit', async e => {
+  e.preventDefault();
+  const err = document.getElementById('err'); err.hidden = true;
+  const body = Object.fromEntries(new FormData(e.target));
+  const btn = e.target.querySelector('button'); btn.disabled = true;
+  try {
+    const r = await fetch('/api/households', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'No se pudo crear');
+    location.href = '/familia/#t=' + encodeURIComponent(j.token);
+  } catch (x) { err.textContent = x.message; err.hidden = false; btn.disabled = false; }
+});
+</script>
+</body>
+</html>

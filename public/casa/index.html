@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Tata</title>
+<meta name="theme-color" content="#EFE8DC">
+<link rel="manifest" href="/casa/manifest.webmanifest">
+<link rel="icon" href="/shared/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/shared/base.css">
+<link rel="stylesheet" href="/casa/casa.css">
+</head>
+<body>
+
+<!-- 1. Vincular con el hogar -->
+<section class="setup" id="pairView" hidden>
+  <div class="card form">
+    <span class="eyebrow">Configurar Tata</span>
+    <h1 class="display" style="font-size:56px;margin:0">TATA</h1>
+    <p>Escribí el código de 6 números que aparece en la app de la familia, en <b>Ajustes</b>.</p>
+    <form id="pairForm" class="form">
+      <input id="pairCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000000" class="code" aria-label="Código">
+      <p class="err" id="pairErr" hidden></p>
+      <button class="btn primary" type="submit">Vincular</button>
+    </form>
+  </div>
+</section>
+
+<!-- 2. Un toque para habilitar sonido, micrófono y pantalla encendida -->
+<section class="setup" id="startView" hidden>
+  <button class="start" id="startBtn" type="button">
+    <span class="display">Empezar</span>
+    <span>Tocá acá para encender a Tata</span>
+  </button>
+  <p class="hint" id="startHint">Si el navegador pregunta por el micrófono, tocá <b>Permitir</b>.</p>
+</section>
+
+<!-- 3. Tata -->
+<main class="home" id="homeView" hidden>
+  <header class="top">
+    <div>
+      <div class="clock display" id="clock">--:--</div>
+      <div class="date" id="date"></div>
+    </div>
+    <div class="conn" id="conn"><i></i><span>Conectando…</span></div>
+  </header>
+
+  <div class="sosbar" id="sosbar" hidden></div>
+
+  <section class="center">
+    <div class="tata" id="tata" data-mode="idle" aria-hidden="true"><div class="body"><div class="eye l"></div><div class="eye r"></div><div class="wood"></div></div><div class="cap"></div></div>
+    <div class="status" id="status" aria-live="polite">Tocá el botón y hablame</div>
+    <div class="heard" id="heard"></div>
+  </section>
+
+  <section class="guide" id="guide" hidden></section>
+
+  <section class="log" id="log" aria-live="polite"></section>
+
+  <div class="action" id="action" hidden></div>
+  <div class="chips" id="chips"></div>
+
+  <section class="today" id="today"></section>
+
+  <footer class="bar">
+    <button class="talk" id="talkBtn" type="button" aria-label="Hablarle a Tata">
+      <svg viewBox="0 0 24 24" width="38" height="38" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+      <span id="talkTxt">Hablar</span>
+    </button>
+    <button class="sos" id="sosBtn" type="button" aria-label="Pedir ayuda">SOS</button>
+  </footer>
+
+  <form class="typebox" id="typeForm" autocomplete="off" hidden>
+    <input id="typeInput" placeholder="Escribile a Tata" aria-label="Escribile a Tata">
+    <button class="btn primary" type="submit">Decir</button>
+  </form>
+
+  <details class="opts">
+    <summary>Opciones</summary>
+    <label class="opt"><input type="checkbox" id="optAlways"> Escuchar siempre (decí “Tata” y lo que necesites)</label>
+    <label class="opt"><input type="checkbox" id="optType"> Mostrar para escribir</label>
+    <label class="opt">Velocidad de la voz <input type="range" id="optRate" min="0.7" max="1.2" step="0.05"></label>
+    <button class="btn small" type="button" id="optTest">Probar voz</button>
+  </details>
+</main>
+
+<script src="/casa/casa.js"></script>
+</body>
+</html>

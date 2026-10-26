@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Tata · Familia</title>
+<meta name="theme-color" content="#EFE8DC">
+<link rel="manifest" href="/familia/manifest.webmanifest">
+<link rel="icon" href="/shared/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/shared/icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/shared/base.css">
+<link rel="stylesheet" href="/familia/familia.css">
+</head>
+<body>
+<div class="app" id="app" hidden>
+  <header class="apphead">
+    <span class="logo display">TATA</span><span class="sub">Familia</span>
+    <span class="who" id="whoPill"></span>
+  </header>
+
+  <!-- HOY -->
+  <section class="screen" data-tab="hoy">
+    <div id="statusCard"></div>
+    <div class="devline" id="devLine"></div>
+
+    <div class="card form" id="msgCard">
+      <h4 id="msgTitle">Mandarle un mensaje</h4>
+      <form id="msgForm" class="form">
+        <textarea id="msgText" rows="2" maxlength="300" placeholder="Ej: Ma, paso a las 5 a tomar unos mates"></textarea>
+        <div class="rec" id="msgRec"></div>
+        <div class="row"><button class="btn primary" type="submit">Que Tata se lo diga</button><span class="hint" id="msgHint"></span></div>
+      </form>
+    </div>
+
+    <h4>Hoy</h4>
+    <ul class="rows" id="todayList"></ul>
+    <h4>Avisos</h4>
+    <ul class="feed" id="feed"></ul>
+  </section>
+
+  <!-- AGENDA -->
+  <section class="screen" data-tab="agenda" hidden>
+    <h4>Recordatorios</h4>
+    <ul class="rows" id="remList"></ul>
+    <details class="card add" id="remAdd">
+      <summary class="btn primary">+ Agregar recordatorio</summary>
+      <form class="form" id="remForm">
+        <div class="two">
+          <label>Tipo<select name="kind"><option value="med">Pastilla o remedio</option><option value="otro">Otro recordatorio</option></select></label>
+          <label>Hora<input name="at" type="time" required value="09:00"></label>
+        </div>
+        <label>Qué es<input name="label" required maxlength="80" placeholder="Pastilla de la presión"></label>
+        <label>Cómo se lo dice Tata (opcional)<input name="say" maxlength="200" placeholder="la pastilla de la presión, la blanca chiquita"></label>
+        <fieldset class="days"><legend>Qué días</legend>
+          <div class="daypick" id="dayPick"></div>
+          <label class="inline"><input type="checkbox" name="once"> Solo una vez, el día <input name="date" type="date" disabled></label>
+        </fieldset>
+        <div class="rec" id="remRec"></div>
+        <p class="hint">Si grabás tu voz, Tata le pasa tu audio en lugar de hablar ella. Las pastillas piden confirmación: si no responde, Tata pregunta de nuevo a los 30 minutos y te avisa a la hora.</p>
+        <p class="err" id="remErr" hidden></p>
+        <button class="btn primary" type="submit">Guardar</button>
+      </form>
+    </details>
+
+    <h4>Turnos</h4>
+    <ul class="rows" id="aptList"></ul>
+    <details class="card add">
+      <summary class="btn">+ Agregar turno</summary>
+      <form class="form" id="aptForm">
+        <div class="two">
+          <label>Día<input name="date" type="date" required></label>
+          <label>Hora<input name="at" type="time" required value="10:30"></label>
+        </div>
+        <label>Con quién<input name="what" required maxlength="100" placeholder="el doctor Ferreyra, el clínico"></label>
+        <label>Algo para acordarse (opcional)<input name="note" maxlength="200" placeholder="Acordate de llevar los análisis."></label>
+        <label class="inline"><input type="checkbox" name="remind_eve" checked> Recordárselo la noche anterior (20:00)</label>
+        <p class="err" id="aptErr" hidden></p>
+        <button class="btn primary" type="submit">Guardar</button>
+      </form>
+    </details>
+  </section>
+
+  <!-- AJUSTES -->
+  <section class="screen" data-tab="ajustes" hidden>
+    <h4>Notificaciones en este celular</h4>
+    <div class="card" id="pushCard"></div>
+
+    <h4>Dispositivo de la casa</h4>
+    <div class="card" id="deviceCard"></div>
+
+    <h4>Avisos</h4>
+    <form class="card form" id="hhForm">
+      <label class="set"><input type="checkbox" name="inactivity_on"><span>Avisarme si no habla con Tata a la mañana
+        <small>Hasta las <input name="inactivity_at" type="time" class="tiny">. Antes de avisarte, Tata le pregunta cómo amaneció y espera 15 minutos.</small></span></label>
+      <label class="set"><input type="checkbox" name="summary_on"><span>Resumen del día
+        <small>A las <input name="summary_at" type="time" class="tiny">, con lo que hizo y si hubo avisos.</small></span></label>
+      <div class="two">
+        <label>Cómo la llama Tata<input name="elder_name" maxlength="60"></label>
+        <label>Emergencias médicas<input name="emergency_phone" maxlength="20" inputmode="tel"></label>
+      </div>
+      <label>Teléfono de su casa o su celular (para el botón “Llamar”)<input name="device_phone" maxlength="30" inputmode="tel"></label>
+      <div class="row"><button class="btn primary" type="submit">Guardar</button><span class="hint" id="hhSaved"></span></div>
+    </form>
+
+    <h4>Familia (reciben avisos)</h4>
+    <ul class="rows" id="memberList"></ul>
+    <details class="card add" id="inviteBox">
+      <summary class="btn">+ Invitar a alguien de la familia</summary>
+      <form class="form" id="inviteForm">
+        <div class="two">
+          <label>Nombre<input name="name" required maxlength="60" placeholder="Tomi"></label>
+          <label>Qué es de ella o él<input name="relation" maxlength="40" placeholder="nieto"></label>
+        </div>
+        <label>Teléfono (opcional)<input name="phone" maxlength="30" inputmode="tel"></label>
+        <button class="btn primary" type="submit">Crear invitación</button>
+        <div id="inviteOut"></div>
+      </form>
+    </details>
+
+    <h4>Otros contactos (vecinos, amigos)</h4>
+    <ul class="rows" id="contactList"></ul>
+    <details class="card add">
+      <summary class="btn">+ Agregar contacto</summary>
+      <form class="form" id="contactForm">
+        <div class="two">
+          <label>Nombre<input name="name" required maxlength="60" placeholder="Marta"></label>
+          <label>Qué es de ella o él<input name="relation" maxlength="40" placeholder="vecina"></label>
+        </div>
+        <label>Teléfono<input name="phone" maxlength="30" inputmode="tel"></label>
+        <button class="btn primary" type="submit">Guardar</button>
+      </form>
+    </details>
+
+    <h4>Mis datos</h4>
+    <form class="card form" id="meForm">
+      <label>Mi teléfono<input name="phone" maxlength="30" inputmode="tel"></label>
+      <label class="set"><input type="checkbox" name="gets_alerts"><span>Recibir avisos y el resumen<small>Si lo apagás, igual te llegan los mensajes que te mande por Tata.</small></span></label>
+      <div class="row"><button class="btn primary" type="submit">Guardar</button><span class="hint" id="meSaved"></span></div>
+    </form>
+    <p><button class="btn danger small" type="button" id="logout">Salir en este celular</button></p>
+  </section>
+
+  <nav class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="hoy" aria-selected="true"><i></i>Hoy</button>
+    <button type="button" role="tab" data-tab="agenda" aria-selected="false"><i></i>Agenda</button>
+    <button type="button" role="tab" data-tab="ajustes" aria-selected="false"><i></i>Ajustes</button>
+  </nav>
+
+  <div class="overlay" id="overlay" hidden></div>
+  <div class="toast" id="toast" hidden></div>
+</div>
+
+<section class="nologin" id="nologin" hidden>
+  <div class="card">
+    <h1 class="display" style="font-size:56px;margin:0 0 8px">TATA</h1>
+    <p>Para entrar necesitás el link de invitación que te mandó tu familia, o crear un hogar nuevo.</p>
+    <a class="btn primary" href="/">Crear un hogar</a>
+  </div>
+</section>
+
+<script src="/familia/familia.js"></script>
+</body>
+</html>
