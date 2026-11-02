@@ -340,3 +340,52 @@ test('panel de Órbita: crea, lista, pausa y borra', async () => {
     assert.equal((await s.call('POST', '/api/orbita/activities', { ...a, at: '25:00' }, 'k')).status, 400);
   } finally { await s.close(); }
 });
+
+// ---------- Familia: dónde vive e intereses ----------
+const fakeGeo = async u => {
+  if (String(u).includes('geocoding-api.open-meteo.com')) return new Response(JSON.stringify({ results: [{ latitude: -31.4, longitude: -64.18 }] }));
+  return new Response('', { status: 404 });
+};
+async function family(s) {
+  const r = await s.call('POST', '/api/households', { memberName: 'Laura', elderName: 'Elsa' });
+  return r.body.token;
+}
+
+test('familia: guarda ciudad y barrio, y la ciudad se geolocaliza', async () => {
+  const s = await serve({ fetchImpl: fakeGeo });
+  try {
+    const tk = await family(s);
+    assert.equal((await s.call('PATCH', '/api/familia/household', { city: 'Córdoba', barrio: 'Alta Córdoba' }, tk)).status, 200);
+    const hh = s.q.get('SELECT city, barrio, lat, lon FROM households');
+    assert.deepEqual({ ...hh }, { city: 'Córdoba', barrio: 'Alta Córdoba', lat: -31.4, lon: -64.18 });
+    const me = (await s.call('GET', '/api/familia/me', null, tk)).body;
+    assert.deepEqual([me.household.city, me.household.barrio], ['Córdoba', 'Alta Córdoba']);
+  } finally { await s.close(); }
+});
+
+test('familia: intereses, hasta 12, y solo los propios se pueden borrar', async () => {
+  const s = await serve({ fetchImpl: fakeGeo });
+  try {
+    const tk = await family(s), other = await family(s);
+    for (let i = 0; i < 12; i++) assert.equal((await s.call('POST', '/api/familia/interests', { text: 'tema ' + i }, tk)).status, 201);
+    assert.equal((await s.call('POST', '/api/familia/interests', { text: 'uno más' }, tk)).status, 400);
+    assert.equal((await s.call('POST', '/api/familia/interests', { text: '  ' }, other)).status, 400);
+    const me = (await s.call('GET', '/api/familia/me', null, tk)).body;
+    assert.equal(me.interests.length, 12);
+    assert.equal((await s.call('DELETE', `/api/familia/interests/${me.interests[0].id}`, null, other)).status, 404);
+    assert.equal((await s.call('DELETE', `/api/familia/interests/${me.interests[0].id}`, null, tk)).status, 200);
+    assert.equal((await s.call('GET', '/api/familia/me', null, tk)).body.interests.length, 11);
+  } finally { await s.close(); }
+});
+
+test('familia: ve lo que hay cerca y lo que le interesó', async () => {
+  const s = await serve({ fetchImpl: fakeGeo });
+  try {
+    const tk = await family(s);
+    await s.call('PATCH', '/api/familia/household', { city: 'Córdoba' }, tk);
+    s.q.run("INSERT INTO activities (title, place, city, at, days, created_at) VALUES ('Tejido', 'Centro', 'Córdoba', 1439, '0123456', 0)");
+    const me = (await s.call('GET', '/api/familia/me', null, tk)).body;
+    assert.equal(me.encuentro.upcoming[0].title, 'Tejido');
+    assert.deepEqual(me.encuentro.liked, []);
+  } finally { await s.close(); }
+});

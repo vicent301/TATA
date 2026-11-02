@@ -11,6 +11,8 @@ import { startScheduler } from './scheduler.js';
 import { parseHHMM, fmtMin } from './time.js';
 import { createAi } from './ai.js';
 import { createVoice, risky } from './voice.js';
+import { upcoming } from './encuentro.js';
+import { geocode } from './news.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -90,7 +92,15 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
         device_phone: hh.device_phone, emergency_phone: hh.emergency_phone,
         inactivity_on: !!hh.inactivity_on, inactivity_at: fmtMin(hh.inactivity_at),
         summary_on: !!hh.summary_on, summary_at: fmtMin(hh.summary_at),
-        online: core.deviceOnline(hh.id), last_seen: hh.last_seen
+        online: core.deviceOnline(hh.id), last_seen: hh.last_seen,
+        city: hh.city, barrio: hh.barrio
+      },
+      interests: q.all('SELECT id, text FROM interests WHERE household_id = ? ORDER BY id', hh.id),
+      encuentro: {
+        upcoming: upcoming(core, hh, 7).map(({ a, date }) => ({ id: a.id, title: a.title, place: a.place, address: a.address, barrio: a.barrio, date, at: fmtMin(a.at), price: a.price, phone: a.phone })),
+        liked: q.all(`SELECT a.title, a.place, a.at, x.date, x.ts FROM activity_answers x JOIN activities a ON a.id = x.activity_id
+          WHERE x.household_id = ? AND x.answer = 'si' AND x.ts > ? ORDER BY x.ts DESC`, hh.id, core.ts() - 30 * 86400000)
+          .map(r => ({ ...r, at: fmtMin(r.at) }))
       },
       now: { date: now.date, time: fmtMin(now.min) },
       sos: core.sos(hh),
@@ -211,6 +221,16 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
       if ('emergency_phone' in b) set('emergency_phone', str(b.emergency_phone, 20) || '107');
       if ('device_phone' in b) set('device_phone', str(b.device_phone, 30) || null);
       if ('timezone' in b) { const tz = str(b.timezone, 60); try { new Intl.DateTimeFormat('es', { timeZone: tz }); } catch { bad('Zona horaria inválida'); } set('timezone', tz); }
+      if ('barrio' in b) set('barrio', str(b.barrio, 60));
+      if ('city' in b) {
+        const city = str(b.city, 60);
+        if (city !== hh.city) {
+          const geo = await geocode(city, fetchImpl);
+          q.run('UPDATE households SET city = ?, lat = ?, lon = ? WHERE id = ?', city, geo?.lat ?? null, geo?.lon ?? null, hh.id);
+          // Otra ciudad, otro clima: que el scheduler vuelva a preparar el día.
+          q.run('UPDATE days SET prepared = NULL, news = NULL, weather = NULL WHERE household_id = ? AND date = ?', hh.id, core.now(hh).date);
+        }
+      }
       changed(hh); return [200, { ok: true }];
     }],
     ['POST', '/api/familia/device/unpair', (req, url) => {
@@ -379,6 +399,21 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
     }],
 
     // ----- dispositivo de la casa -----
+    // ----- intereses de ella (para charlar, para las noticias y para elegir actividades) -----
+    ['POST', '/api/familia/interests', async (req, url) => {
+      const { hh } = authMember(req, url);
+      const text = str((await readJson(req)).text, 40);
+      if (!text) bad('Falta el interés');
+      if (q.get('SELECT COUNT(*) AS n FROM interests WHERE household_id = ?', hh.id).n >= 12) bad('Ya hay 12 intereses');
+      const r = q.run('INSERT INTO interests (household_id, text) VALUES (?, ?)', hh.id, text);
+      changed(hh); return [201, { id: Number(r.lastInsertRowid) }];
+    }],
+    ['DELETE', '/api/familia/interests/:id', (req, url, res, p) => {
+      const { hh } = authMember(req, url);
+      if (!q.run('DELETE FROM interests WHERE id = ? AND household_id = ?', Number(p.id), hh.id).changes) throw new HttpError(404, 'No existe');
+      changed(hh); return [200, { ok: true }];
+    }],
+
     // ----- Órbita: la cartelera de Encuentro -----
     ['GET', '/api/orbita/activities', (req, url) => {
       authOrbita(req, url);
