@@ -85,7 +85,8 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
     const now = core.now(hh);
     return {
       me: { id: member.id, name: member.name, relation: member.relation, phone: member.phone, is_admin: !!member.is_admin, gets_alerts: !!member.gets_alerts,
-        has_voice: !!q.get('SELECT 1 FROM voices WHERE member_id = ?', member.id) },
+        has_voice: !!q.get('SELECT 1 FROM voices WHERE member_id = ?', member.id),
+        voice_always: !!q.get('SELECT always FROM voices WHERE member_id = ?', member.id)?.always },
       features: { ai: !!core.ai, voice: !!voice?.ready },
       household: {
         elder_name: hh.elder_name, timezone: hh.timezone, device_code: hh.device_code, paired: !!hh.device_token,
@@ -156,6 +157,8 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
     const days = date ? '' : (str(b.days, 7).replace(/[^0-6]/g, '') || '0123456');
     return { label, say: str(b.say, 200) || label.toLowerCase(), at, date, days, is_med: bool(b.is_med) };
   }
+  /** Si este mensaje va con su voz: lo que eligió en el mensaje o, si no dijo nada, su preferencia de "usar mi voz siempre". */
+  const ownVoice = (member, b) => 'own_voice' in b ? !!b.own_voice : !!q.get('SELECT always FROM voices WHERE member_id = ?', member.id)?.always;
   /** Genera `text` con la voz clonada del familiar. Devuelve { id } del audio o { reason } si no corresponde. */
   async function inVoice(member, hh, text) {
     const v = q.get('SELECT wav FROM voices WHERE member_id = ?', member.id);
@@ -208,6 +211,7 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
         q.run('UPDATE contacts SET phone = ? WHERE member_id = ?', str(b.phone, 30) || null, member.id);
       }
       if ('gets_alerts' in b) q.run('UPDATE members SET gets_alerts = ? WHERE id = ?', bool(b.gets_alerts), member.id);
+      if ('voice_always' in b) q.run('UPDATE voices SET always = ? WHERE member_id = ?', bool(b.voice_always), member.id);
       changed(hh); return [200, { ok: true }];
     }],
     ['PATCH', '/api/familia/household', async (req, url) => {
@@ -244,7 +248,7 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
     ['POST', '/api/familia/reminders', async (req, url) => {
       const { member, hh } = authMember(req, url); const b = await readJson(req); const f = reminderFields(b);
       let audioId = audioOf(hh, b.audio_id), voiceNote = null;
-      if (!audioId && b.own_voice) {
+      if (!audioId && ownVoice(member, b)) {
         const v = await inVoice(member, hh, `${hh.elder_name}, ${f.say.charAt(0).toUpperCase() + f.say.slice(1)}.`);
         audioId = v.id || null; voiceNote = v.reason || null;
       }
@@ -350,7 +354,7 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
       const spoken = text ? `${hh.elder_name}, te manda un mensaje ${member.name}: ${text}` : `${hh.elder_name}, te mandó un audio ${member.name}.`;
       let items = audioId ? [{ text: `${hh.elder_name}, te mandó un audio ${member.name}.` }, { text: spoken, audio: `/api/casa/audio/${audioId}` }] : [{ text: spoken }];
       let voiceNote = null;
-      if (!audioId && text && b.own_voice) {
+      if (!audioId && text && ownVoice(member, b)) {
         // Tata presenta el mensaje con su voz y después se escucha la voz del familiar.
         const v = await inVoice(member, hh, text);
         if (v.id) items = [{ text: `${hh.elder_name}, ${member.name} te dejó dicho:` }, { text, audio: `/api/casa/audio/${v.id}` }];

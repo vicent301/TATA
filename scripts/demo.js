@@ -34,14 +34,18 @@ for (const a of ACTIVITIES) {
 }
 
 // ---------- hogar de demo ----------
-let hh = q.get("SELECT * FROM households WHERE elder_name = 'Elsa (demo)'");
+// Se reconoce por Laura (su teléfono de demo), así sigue andando aunque le cambien el nombre al hogar.
+const DEMO_PHONE = '+54 9 351 555 1234';
+const findDemo = () => q.get(`SELECT h.* FROM households h JOIN members m ON m.household_id = h.id
+  WHERE m.name = 'Laura' AND m.phone = ? ORDER BY h.id LIMIT 1`, DEMO_PHONE);
+let hh = findDemo();
 if (!hh) {
   const code = q.get('SELECT 1 FROM households WHERE device_code = ?', DEMO_CODE) ? String(100000 + Math.floor(Math.random() * 900000)) : DEMO_CODE;
   q.run(`INSERT INTO households (elder_name, timezone, device_code, city, barrio, created_at)
     VALUES ('Elsa (demo)', 'America/Argentina/Cordoba', ?, 'Córdoba', 'Alta Córdoba', ?)`, code, now);
-  hh = q.get("SELECT * FROM households WHERE elder_name = 'Elsa (demo)'");
+  hh = q.get('SELECT * FROM households WHERE id = (SELECT MAX(id) FROM households)');
   const laura = Number(q.run(`INSERT INTO members (household_id, name, relation, phone, token, is_admin, created_at)
-    VALUES (?, 'Laura', 'hija', '+54 9 351 555 1234', ?, 1, ?)`, hh.id, token(), now).lastInsertRowid);
+    VALUES (?, 'Laura', 'hija', ?, ?, 1, ?)`, hh.id, DEMO_PHONE, token(), now).lastInsertRowid);
   q.run("INSERT INTO contacts (household_id, name, relation, phone, member_id) VALUES (?, 'Laura', 'hija', '+54 9 351 555 1234', ?)", hh.id, laura);
   q.run("INSERT INTO contacts (household_id, name, relation, phone) VALUES (?, 'Marta', 'vecina', '351 555 0000')", hh.id);
   q.run("INSERT INTO reminders (household_id, label, say, at, is_med) VALUES (?, 'Pastilla de la presión', 'la pastilla de la presión', ?, 1)", hh.id, hhmm('09:00'));

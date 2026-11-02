@@ -255,6 +255,7 @@
         own_voice: !$('#remOwnBox').hidden && remForm.own_voice.checked
       });
       remForm.reset(); remRec.reset(); remForm.date.disabled = true; $('#dayPick').style.opacity = 1;
+      remForm.own_voice.checked = !!D.me.voice_always;
       $('#remAdd').open = false; await load(); toast(r.voiceNote ? 'Guardado. ' + r.voiceNote : 'Recordatorio guardado');
     } catch (x) { err.textContent = x.message; err.hidden = false; }
   });
@@ -290,10 +291,17 @@
   function renderVoice() {
     const has = D.me.has_voice;
     $('#msgOwnBox').hidden = !has; $('#remOwnBox').hidden = !has;
+    // Con "usar mi voz siempre", las casillas vienen tildadas (se pueden destildar en un mensaje puntual).
+    if (voiceSt.always !== D.me.voice_always) {
+      voiceSt.always = D.me.voice_always;
+      $('#msgOwn').checked = !!D.me.voice_always; remForm.own_voice.checked = !!D.me.voice_always;
+    }
     if (voiceSt.mr) return; // no pisar la grabación en curso
     const off = D.features?.voice ? '' : '<p class="hint">El servicio de voz no está prendido en el servidor. Podés grabar igual; mientras tanto, Tata dice los mensajes con su voz.</p>';
     if (has && !voiceSt.again) {
       $('#voiceCard').innerHTML = `<p style="margin:0">✓ Tu voz está guardada. Al mandar un mensaje o crear un recordatorio podés elegir “Que lo diga con mi voz”.</p>
+        <label class="set"><input type="checkbox" id="voiceAlways"${D.me.voice_always ? ' checked' : ''}><span>Usar mi voz siempre
+          <small>Tus mensajes y recordatorios salen con tu voz sin tildarlo cada vez. Tarda unos segundos más en prepararse.</small></span></label>
         <p class="hint">Antes de tu voz, Tata siempre aclara que el mensaje es tuyo. Lo que hable de plata, bancos o claves lo dice Tata con su propia voz.</p>${off}
         <div class="rec" id="voiceOut"></div>
         <div class="row"><button class="btn small" type="button" data-v="test">Escuchar cómo suena</button><button class="btn small" type="button" data-v="again">Grabar de nuevo</button><button class="btn small danger" type="button" data-v="del">Borrar mi voz</button></div>`;
@@ -308,6 +316,12 @@
   }
   $('#voiceCard').addEventListener('change', e => {
     if (e.target.id === 'voiceConsent') $('#voiceCard [data-v=rec]').disabled = !e.target.checked;
+    if (e.target.id === 'voiceAlways') {
+      const on = e.target.checked;
+      patch('/api/familia/me', { voice_always: on })
+        .then(() => { D.me.voice_always = on; voiceSt.always = undefined; renderVoice(); toast(on ? 'Listo: tus mensajes van a salir con tu voz' : 'Listo: vas a elegir en cada mensaje'); })
+        .catch(x => { e.target.checked = !on; toast(x.message); });
+    }
   });
   $('#voiceCard').addEventListener('click', async e => {
     const b = e.target.closest('[data-v]'); if (!b) return;

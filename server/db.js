@@ -150,7 +150,8 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE TABLE IF NOT EXISTS voices (
   member_id INTEGER PRIMARY KEY REFERENCES members(id) ON DELETE CASCADE,
   wav BLOB NOT NULL,
-  consent_at INTEGER NOT NULL
+  consent_at INTEGER NOT NULL,
+  always INTEGER NOT NULL DEFAULT 0  -- usar su voz en todos sus mensajes y recordatorios
 );
 
 CREATE TABLE IF NOT EXISTS audio (
@@ -208,7 +209,8 @@ const ADDED = [
   ['days', 'prepared', 'INTEGER'],
   ['days', 'news', 'TEXT'],
   ['days', 'weather', 'TEXT'],
-  ['activities', 'auto', 'INTEGER NOT NULL DEFAULT 0']
+  ['activities', 'auto', 'INTEGER NOT NULL DEFAULT 0'],
+  ['voices', 'always', 'INTEGER NOT NULL DEFAULT 0']
 ];
 
 export function migrate(db) {

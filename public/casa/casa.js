@@ -163,28 +163,52 @@
       } catch { setTimeout(fin, 1500); }
     });
   }
+  let currentAudio = null, currentText = '', barged = false;
   function playAudio(src) {
     return new Promise((res, rej) => {
       const a = new Audio(src + (src.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(token));
-      a.onended = res; a.onerror = rej;
-      a.play().catch(rej);
+      currentAudio = a;
+      const done = () => { if (currentAudio === a) currentAudio = null; };
+      a.onended = () => { done(); res(); }; a.onerror = e => { done(); rej(e); };
+      a.onpause = () => { if (barged) { done(); res(); } };
+      a.play().catch(e => { done(); rej(e); });
     });
   }
   function say(items) {
     queue.push(...items);
     if (!speaking) drain();
   }
+  // Cortarla diciendo "Tata": se calla, descarta lo que le faltaba y queda escuchando.
+  function bargeIn() {
+    if (!speaking || barged) return;
+    barged = true; queue = [];
+    try { speechSynthesis.cancel(); } catch {}
+    try { currentAudio?.pause(); } catch {}
+    navigator.vibrate?.(60);
+  }
   async function drain() {
-    speaking = true; pauseListening();
+    speaking = true; barged = false;
+    // Con "escuchar siempre", el micrófono sigue abierto para poder cortarla; si no, se apaga.
+    if (!(wantAlways && recContinuous)) pauseListening();
+    if (wantAlways && !recOn) startRec(true);
     while (queue.length) {
       const it = queue.shift();
+      currentText = it.text;
       setMode('speaking'); addLine('tata', it.text);
       if (it.action) showAction(it.action);
-      if (it.audio) { try { await playAudio(it.audio); } catch { await tts(it.text); } }
+      if (it.audio) { try { await playAudio(it.audio); } catch { if (!barged) await tts(it.text); } }
       else await tts(it.text);
       if (/\?\s*$/.test(it.text)) convoUntil = Date.now() + 25000;
     }
-    speaking = false; setMode('idle'); resumeListening();
+    currentText = ''; speaking = false;
+    // Lo que el micrófono captó mientras hablaba es su propia voz: se descarta y se arranca de nuevo.
+    if (recContinuous) pauseListening();
+    if (barged && wantAlways && recContinuous) {
+      convoUntil = Date.now() + 25000; setMode('listening');
+      setTimeout(() => { if (!speaking && Date.now() >= convoUntil - 50) setMode('idle'); }, 25000);
+    } else if (!recOn) setMode('idle');
+    barged = false;
+    resumeListening();
   }
 
   // ---------- escuchar ----------
@@ -200,7 +224,7 @@
     }
   }
 
-  let rec = null, recOn = false, wantAlways = false;
+  let rec = null, recOn = false, recContinuous = false, wantAlways = false;
   function makeRec(continuous) {
     const r = new SR();
     r.lang = 'es-AR'; r.interimResults = true; r.continuous = continuous; r.maxAlternatives = 1;
@@ -210,14 +234,20 @@
         const res = ev.results[i];
         if (res.isFinal) final += res[0].transcript; else interim += res[0].transcript;
       }
+      if (speaking) {
+        // Mientras habla, solo importa si la llaman. Si lo que ella misma dice tiene "Tata", no se corta sola.
+        if (/\btata\b/i.test(interim + ' ' + final) && !/\btata\b/i.test(currentText)) bargeIn();
+        return;
+      }
       if (interim && (!continuous || Date.now() < convoUntil || /\btata\b/i.test(interim))) addLine('me', interim);
       if (final) onFinal(final, continuous);
     };
     r.onerror = ev => { if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { wantAlways = false; showTypeFallback(); } };
     r.onend = () => {
+      if (rec !== r) return;  // ya hay otro reconocedor andando
       recOn = false;
       if (!speaking) setMode('idle');
-      if (continuous && wantAlways && !speaking) setTimeout(() => { if (wantAlways && !speaking && !recOn) startRec(true); }, 300);
+      if (continuous && wantAlways) setTimeout(() => { if (wantAlways && !recOn) startRec(true); }, 300);
     };
     return r;
   }
@@ -229,10 +259,10 @@
   }
   function startRec(continuous) {
     if (!SR || recOn) return;
-    try { rec = makeRec(continuous); rec.start(); recOn = true; } catch { recOn = false; }
+    try { rec = makeRec(continuous); rec.start(); recOn = true; recContinuous = continuous; } catch { recOn = false; }
     if (!continuous) setMode('listening');
   }
-  function pauseListening() { if (recOn) { try { rec.abort(); } catch {} recOn = false; } }
+  function pauseListening() { if (recOn) { const r = rec; rec = null; try { r.abort(); } catch {} recOn = false; } }
   function resumeListening() { if (wantAlways) startRec(true); }
   function startAlways() { if (!SR) return showTypeFallback(); wantAlways = true; startRec(true); setMode('idle'); }
   function stopAlways() { wantAlways = false; pauseListening(); setMode('idle'); }
@@ -262,7 +292,7 @@
 
   function talk() {
     if (!SR) { showTypeFallback(); $('#typeInput').focus(); return; }
-    speechSynthesis.cancel(); queue = []; speaking = false;
+    if (speaking) bargeIn();
     if (recOn && !wantAlways) { rec.stop(); return; }
     pauseListening();
     convoUntil = Date.now() + 25000;

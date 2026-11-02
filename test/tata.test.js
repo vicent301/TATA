@@ -381,6 +381,37 @@ test('la tablet se puede desvincular sola, la familia se entera y el código nue
   } finally { await s.close(); }
 });
 
+// ---------- Voz del familiar ----------
+const WAV = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(100)]);
+async function withVoice(s, fam) {
+  return fetch(s.url + '/api/familia/voice?consent=1', { method: 'POST', headers: { authorization: 'Bearer ' + fam, 'content-type': 'audio/wav' }, body: WAV });
+}
+test('"usar mi voz siempre": mensajes y recordatorios salen con su voz sin tildarlo cada vez', async () => {
+  const spoken = [];
+  const voice = { ready: true, check: async () => true, speak: async text => { spoken.push(text); return Buffer.from('RIFFfake'); } };
+  const s = await serve({ voice });
+  try {
+    const fam = (await s.call('POST', '/api/households', { memberName: 'Laura', elderName: 'Elsa' })).body.token;
+    await withVoice(s, fam);
+    assert.equal((await s.call('GET', '/api/familia/me', null, fam)).body.me.voice_always, false);
+
+    await s.call('POST', '/api/familia/say', { text: 'Te quiero mucho' }, fam);
+    assert.equal(spoken.length, 0, 'sin la opción, no usa su voz');
+
+    assert.equal((await s.call('PATCH', '/api/familia/me', { voice_always: true }, fam)).status, 200);
+    assert.equal((await s.call('GET', '/api/familia/me', null, fam)).body.me.voice_always, true);
+    await s.call('POST', '/api/familia/say', { text: 'Paso a las seis' }, fam);
+    await s.call('POST', '/api/familia/reminders', { label: 'Regar las plantas', at: '18:00' }, fam);
+    assert.deepEqual(spoken, ['Paso a las seis', 'Elsa, Regar las plantas.']);
+
+    await s.call('POST', '/api/familia/say', { text: 'Esta no', own_voice: false }, fam);
+    assert.equal(spoken.length, 2, 'si la destilda en un mensaje, ese sale con la voz de Tata');
+
+    await s.call('DELETE', '/api/familia/voice', null, fam);
+    assert.equal((await s.call('GET', '/api/familia/me', null, fam)).body.me.voice_always, false);
+  } finally { await s.close(); }
+});
+
 // ---------- Panel de Órbita ----------
 test('panel de Órbita: apagado sin clave y protegido con clave', async () => {
   const off = await serve({ orbitaKey: '' });
