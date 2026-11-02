@@ -88,3 +88,4 @@ fieldset.days legend{font-size:13px;color:var(--muted);padding:0;margin-bottom:4
 @keyframes drop{from{transform:translate(-50%,-14px);opacity:0}}
 .nologin{min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:16px}
 .nologin .card{max-width:420px}
+.readme{margin:0;padding:12px 14px;border-left:4px solid var(--amber);background:var(--amber-soft);border-radius:10px;font-size:17px;line-height:1.5}

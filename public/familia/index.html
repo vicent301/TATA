@@ -32,6 +32,7 @@
       <form id="msgForm" class="form">
         <textarea id="msgText" rows="2" maxlength="300" placeholder="Ej: Ma, paso a las 5 a tomar unos mates"></textarea>
         <div class="rec" id="msgRec"></div>
+        <label class="inline" id="msgOwnBox" hidden><input type="checkbox" id="msgOwn"> Que lo diga con mi voz</label>
         <div class="row"><button class="btn primary" type="submit">Que Tata se lo diga</button><span class="hint" id="msgHint"></span></div>
       </form>
     </div>
@@ -60,6 +61,7 @@
           <label class="inline"><input type="checkbox" name="once"> Solo una vez, el día <input name="date" type="date" disabled></label>
         </fieldset>
         <div class="rec" id="remRec"></div>
+        <label class="inline" id="remOwnBox" hidden><input type="checkbox" name="own_voice"> Que lo diga con mi voz (sin grabar cada vez)</label>
         <p class="hint">Si grabás tu voz, Tata le pasa tu audio en lugar de hablar ella. Las pastillas piden confirmación: si no responde, Tata pregunta de nuevo a los 30 minutos y te avisa a la hora.</p>
         <p class="err" id="remErr" hidden></p>
         <button class="btn primary" type="submit">Guardar</button>
@@ -134,6 +136,9 @@
         <button class="btn primary" type="submit">Guardar</button>
       </form>
     </details>
+
+    <h4>Tu voz en Tata</h4>
+    <div class="card form" id="voiceCard"></div>
 
     <h4>Mis datos</h4>
     <form class="card form" id="meForm">

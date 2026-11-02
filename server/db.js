@@ -119,6 +119,32 @@ CREATE TABLE IF NOT EXISTS contacts (
   member_id INTEGER REFERENCES members(id) ON DELETE CASCADE
 );
 
+-- Charla libre con Claude: solo se agrega (nunca se edita), y una charla nueva arranca vacía.
+CREATE TABLE IF NOT EXISTS chat (
+  id INTEGER PRIMARY KEY,
+  household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+  session INTEGER NOT NULL,
+  ts INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chat_hh ON chat(household_id, session, id);
+
+-- Cosas que ella le contó a Tata y quiere que recuerde (gustos, nombres, historias).
+CREATE TABLE IF NOT EXISTS memories (
+  id INTEGER PRIMARY KEY,
+  household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+  ts INTEGER NOT NULL,
+  text TEXT NOT NULL
+);
+
+-- Muestra de voz de un familiar (WAV) para que Tata diga sus mensajes con su voz. Solo con consentimiento.
+CREATE TABLE IF NOT EXISTS voices (
+  member_id INTEGER PRIMARY KEY REFERENCES members(id) ON DELETE CASCADE,
+  wav BLOB NOT NULL,
+  consent_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS audio (
   id INTEGER PRIMARY KEY,
   household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,

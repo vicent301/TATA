@@ -126,7 +126,7 @@ export async function handle(core, hh, raw) {
   }
   if (/(foto|whatsapp|wasap|guasap)/.test(t)) return (guideStart(core, hh, 'foto', say), { replies });
 
-  if (/\b(llama|llamar|llamame|llamale|llames|comunicame|hablar con|habla con)\b/.test(t)) {
+  if (/\b(llama|llamar|llamame|llamale|llames|comunicame|hablar con|habla con)\b/.test(t) && !/\bse llama\b/.test(t)) {
     const c = findContact(core, hh, t);
     if (c) return (callContact(core, hh, c, say), { replies });
     const names = core.q.all('SELECT name FROM contacts WHERE household_id = ? ORDER BY id LIMIT 3', hh.id).map(x => x.name);
@@ -158,18 +158,25 @@ export async function handle(core, hh, raw) {
   }
   if (/(que hora|hora es)/.test(t)) { say(spokenTime(now.min) + '.'); return { replies }; }
   if (/(que dia|que fecha|dia es hoy)/.test(t)) { say('Hoy es ' + spokenDate(now.date) + '.'); return { replies }; }
-  if (/(sola|solo|aburrida|aburrido|triste|extrano)/.test(t)) {
+  // Charla corta: con Claude disponible, solo para frases breves; lo demás lo charla él.
+  const brief = !core.ai || t.split(' ').length <= 5;
+  if (brief && /\b(sola|solo|aburrida|aburrido|triste|extrano)\b/.test(t)) {
     const c = core.q.get("SELECT * FROM contacts WHERE household_id = ? ORDER BY CASE WHEN relation LIKE 'niet%' THEN 0 ELSE 1 END, id LIMIT 1", hh.id);
     if (c) { set({ confirm: { kind: 'call', id: c.id } }); say(`Te entiendo, ${name}. ¿Querés que le avise a ${c.name} para charlar un rato?`); }
     else say(`Te entiendo, ${name}. Acá estoy con vos.`);
     return { replies };
   }
-  if (/\b(hola|buen dia|buenas|buenos dias|buenas tardes|buenas noches)\b/.test(t)) {
+  if (brief && /\b(hola|buen dia|buenas|buenos dias|buenas tardes|buenas noches)\b/.test(t)) {
     say(`${now.min < 720 ? '¡Buen día' : now.min < 1200 ? '¡Buenas tardes' : '¡Buenas noches'}, ${name}! ¿En qué te ayudo?`); return { replies };
   }
-  if (/(estoy bien|todo bien|\bbien\b|recien me levanto|amaneci bien)/.test(t)) { say(`Me alegro mucho, ${name}. Cualquier cosa, acá estoy.`); return { replies }; }
-  if (/gracias/.test(t)) { say(`De nada, ${name}. Para eso estoy.`); return { replies }; }
+  if (brief && /(estoy bien|todo bien|\bbien\b|recien me levanto|amaneci bien)/.test(t)) { say(`Me alegro mucho, ${name}. Cualquier cosa, acá estoy.`); return { replies }; }
+  if (brief && /gracias/.test(t)) { say(`De nada, ${name}. Para eso estoy.`); return { replies }; }
 
+  // Nada de lo anterior: si hay Claude, que charle él.
+  if (core.ai) {
+    const ai = await core.ai.reply(core, hh, String(raw).trim());
+    if (ai?.length) return { replies: ai };
+  }
   say(`Perdoná, ${name}, no te entendí bien. Podés pedirme que llame a alguien, preguntarme por tus turnos o tus remedios, o decirme "necesito ayuda".`);
   return { replies };
 }

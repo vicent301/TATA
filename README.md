@@ -21,6 +21,47 @@ npm test           # tests de la lógica
 
 > El micrófono y las notificaciones del navegador solo funcionan en `localhost` o con **HTTPS**. Para probar con una tablet real hay que publicarlo (ver abajo) o usar un túnel como `npx localtunnel --port 3000` / `cloudflared tunnel --url http://localhost:3000`.
 
+## La pantalla de la casa
+
+Solo el parlante de Tata en el centro, como un Echo:
+
+- **Decí “Tata” y lo que necesites**: escucha siempre (se puede apagar en `···`).
+- **Tocalo** para hablarle sin decir “Tata”.
+- **Mantenelo apretado 2 segundos** para pedir ayuda: el aro se llena de rojo y avisa a toda la familia.
+- Lo que Tata dice aparece en letras grandes y se apaga solo. Los botones (“Sí, dale”, “Llamar a Laura”) aparecen solo cuando hacen falta.
+
+## Charla con Claude (opcional)
+
+SOS, pastillas, turnos y llamadas siguen siendo reglas fijas y testeables. Todo lo que esas reglas no entienden lo charla Claude: preguntas generales, compañía, y también puede avisarle algo a un familiar, anotar un recordatorio, recordar cosas que ella cuenta o disparar el SOS si detecta una urgencia (`server/ai.js`).
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... npm start
+```
+
+Sin la clave, Tata funciona igual que antes. `TATA_MODEL` cambia el modelo (por defecto `claude-opus-5-5`).
+
+## La voz del familiar (opcional, gratis y local)
+
+Cada familiar puede grabar 10 a 30 segundos de su voz en **Ajustes → Tu voz en Tata** (con consentimiento explícito). Después, al mandar un mensaje o crear un recordatorio, elige “Que lo diga con mi voz”.
+
+Usa [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) (Resemble AI, licencia MIT), que corre en tu compu, mejor con una placa NVIDIA:
+
+```powershell
+voz\instalar.ps1                          # una vez: crea voz\.venv (baja ~3 GB)
+voz\.venv\Scripts\python voz\servidor.py  # deja el servicio en http://127.0.0.1:5005
+```
+
+En la rama `dev` está a medio probar VoiceStudio como motor principal, con Chatterbox de respaldo (ver HANDOFF.md).
+
+Cuidados, porque las estafas con voces clonadas apuntan a personas mayores:
+
+- Antes de la voz del familiar, Tata siempre dice “Laura te dejó dicho:”.
+- Lo que hable de plata, bancos, claves o códigos se dice con la voz de Tata, nunca con la clonada (`server/voice.js`).
+- La voz clonada solo dice lo que ese familiar escribió; nunca lo que genera Claude.
+- Chatterbox le agrega una marca de agua inaudible a cada audio. El familiar puede borrar su voz cuando quiera.
+
+Si el servicio de voz no está prendido, Tata dice el mensaje con su propia voz y la app avisa por qué.
+
 ## Publicarlo
 
 Es un solo proceso Node con una base SQLite en `data/tata.db`. Cualquier hosting con disco persistente sirve (Render, Railway, Fly.io, un VPS). Variables opcionales:
@@ -31,5 +72,8 @@ Es un solo proceso Node con una base SQLite en `data/tata.db`. Cualquier hosting
 | `DB_FILE` | Ruta de la base (por defecto `data/tata.db`) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Claves de push. Si no están, se generan solas y se guardan en la base |
 | `VAPID_SUBJECT` | `mailto:` de contacto para el servicio de push |
+| `ANTHROPIC_API_KEY` | Activa la charla con Claude |
+| `TATA_MODEL` | Modelo de Claude (por defecto `claude-opus-5-5`) |
+| `VOZ_URL` | Dónde está el servicio de voz (por defecto `http://127.0.0.1:5005`) |
 
 Más contexto del proyecto en [HANDOFF.md](HANDOFF.md).

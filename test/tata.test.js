@@ -151,3 +151,64 @@ test('resumen de la noche con lo que hizo en el día', async () => {
   assert.match(ev.body, /Ningún aviso/);
   assert.match(ev.list, /Le mandó un mensaje a Laura/);
 });
+
+// ---------- Claude como respaldo (cliente simulado: no llama a la API) ----------
+import { createAi } from '../server/ai.js';
+import { risky } from '../server/voice.js';
+
+function fakeClaude(script) {
+  const calls = [];
+  const client = { beta: { messages: { create: async p => { calls.push(structuredClone(p)); return script.shift(); } } } };
+  return { ai: createAi({ client }), calls };
+}
+const text = t => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: t }] });
+const use = (name, input) => ({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu_' + name, name, input }] });
+
+test('lo que las reglas no entienden lo charla Claude, con contexto y sin romper las reglas', async () => {
+  const t = setup();
+  const { ai, calls } = fakeClaude([text('Para un flan necesitás huevos, leche y azúcar, Elsa.')]);
+  t.core.ai = ai;
+  assert.match(await t.hear('Hola Tata, ¿cómo se hace un flan casero?'), /huevos, leche y azúcar/);
+  assert.match(calls[0].messages.at(-1).content, /\[Contexto\] Hoy es/);
+  assert.match(calls[0].messages.at(-1).content, /Elsa dice: Hola Tata/);
+  assert.equal(calls[0].fallbacks, 'default');
+  // las reglas siguen primero: la hora no pasa por Claude
+  assert.match(await t.hear('qué hora es'), /^Son las/);
+  assert.equal(calls.length, 1);
+});
+
+test('Claude puede avisarle a un familiar y la charla sigue en la misma sesión', async () => {
+  const t = setup();
+  const { ai, calls } = fakeClaude([use('avisar_familiar', { nombre: 'Laura', mensaje: 'Hoy hice tu torta preferida' }), text('Listo, ya le avisé a Laura.'), text('¡Qué lindo!')]);
+  t.core.ai = ai;
+  assert.match(await t.hear('quiero que Laura sepa que hoy hice su torta preferida de chocolate'), /ya le avisé a Laura/);
+  assert.ok(t.pushed.some(p => p.id === t.laura && p.title === 'Mensaje de Elsa para Laura'));
+  assert.equal(calls[1].messages.at(-1).content[0].type, 'tool_result');
+  await t.hear('y también me salió muy rica la masa de las empanadas');
+  assert.equal(calls[2].messages.length, 5); // charla anterior completa + lo nuevo
+});
+
+test('si Claude detecta una urgencia, se dispara el SOS de siempre', async () => {
+  const t = setup();
+  const { ai } = fakeClaude([use('pedir_ayuda', { motivo: 'le duele mucho el pecho' })]);
+  t.core.ai = ai;
+  const r = await t.hear('tengo una presión rara en el pecho que no se me va');
+  assert.match(r, /Ya le avisé a tu familia/);
+  assert.equal(t.events().at(-1).kind, 'alert');
+});
+
+test('si Claude falla, Tata contesta como antes', async () => {
+  const t = setup();
+  t.core.ai = createAi({ client: { beta: { messages: { create: async () => { throw new Error('sin red'); } } } } });
+  const orig = console.error; console.error = () => {};
+  try { assert.match(await t.hear('contame algo de la historia de Córdoba por favor'), /no te entendí/); }
+  finally { console.error = orig; }
+});
+
+test('la voz clonada nunca se usa para plata, bancos o claves', () => {
+  assert.ok(risky('Ma, transferime 20 mil al alias que te paso'));
+  assert.ok(risky('pasame el código que te llegó'));
+  assert.ok(risky('Necesito tu clave del banco'));
+  assert.ok(!risky('Paso a las 5 a tomar unos mates'));
+  assert.ok(!risky('Acordate de la pastilla de la presión'));
+});

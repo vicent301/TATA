@@ -76,7 +76,7 @@
     $('#whoPill').textContent = name;
     document.title = `Tata · ${name}`;
     $('#msgTitle').textContent = `Mandarle un mensaje a ${name}`;
-    renderStatus(); renderOverlay(); renderToday(); renderFeed(); renderAgenda(); renderSettings();
+    renderStatus(); renderOverlay(); renderToday(); renderFeed(); renderAgenda(); renderSettings(); renderVoice();
   }
 
   function renderStatus() {
@@ -213,10 +213,12 @@
     const text = $('#msgText').value.trim();
     if (!text && !msgRec.id) return;
     try {
-      const r = await post('/api/familia/say', { text, audio_id: msgRec.id });
-      $('#msgHint').textContent = r.delivered ? '✓ Tata se lo está diciendo' : 'Tata está desconectada: no le llegó.';
+      const own = !$('#msgOwnBox').hidden && $('#msgOwn').checked && !msgRec.id;
+      if (own) $('#msgHint').textContent = 'Preparando tu voz…';
+      const r = await post('/api/familia/say', { text, audio_id: msgRec.id, own_voice: own });
+      $('#msgHint').textContent = (r.delivered ? '✓ Tata se lo está diciendo' : 'Tata está desconectada: no le llegó.') + (r.voiceNote ? ' · ' + r.voiceNote : '');
       $('#msgText').value = ''; msgRec.reset();
-      setTimeout(() => { $('#msgHint').textContent = ''; }, 5000);
+      setTimeout(() => { $('#msgHint').textContent = ''; }, r.voiceNote ? 9000 : 5000);
       load();
     } catch (x) { $('#msgHint').textContent = x.message; }
   });
@@ -234,12 +236,13 @@
     const days = [...remForm.querySelectorAll('input[name=d]:checked')].map(i => i.value).join('');
     if (!remForm.once.checked && !days) { err.textContent = 'Elegí al menos un día.'; err.hidden = false; return; }
     try {
-      await post('/api/familia/reminders', {
+      const r = await post('/api/familia/reminders', {
         label: remForm.label.value, say: remForm.say.value, at: remForm.at.value, is_med: remForm.kind.value === 'med',
-        days: remForm.once.checked ? '' : days, date: remForm.once.checked ? remForm.date.value : null, audio_id: remRec.id
+        days: remForm.once.checked ? '' : days, date: remForm.once.checked ? remForm.date.value : null, audio_id: remRec.id,
+        own_voice: !$('#remOwnBox').hidden && remForm.own_voice.checked
       });
       remForm.reset(); remRec.reset(); remForm.date.disabled = true; $('#dayPick').style.opacity = 1;
-      $('#remAdd').open = false; await load(); toast('Recordatorio guardado');
+      $('#remAdd').open = false; await load(); toast(r.voiceNote ? 'Guardado. ' + r.voiceNote : 'Recordatorio guardado');
     } catch (x) { err.textContent = x.message; err.hidden = false; }
   });
 
@@ -251,6 +254,96 @@
       await post('/api/familia/appointments', { date: aptForm.date.value, at: aptForm.at.value, what: aptForm.what.value, note: aptForm.note.value, remind_eve: aptForm.remind_eve.checked });
       aptForm.reset(); aptForm.closest('details').open = false; await load(); toast('Turno guardado');
     } catch (x) { err.textContent = x.message; err.hidden = false; }
+  });
+
+  // ---------- tu voz en Tata ----------
+  // Se graba una muestra de 10 a 30 segundos y se sube como WAV (el servicio de voz no lee webm).
+  const VOICE_TEXT = 'Hola, ¿cómo andás? Hoy me levanté temprano, tomé unos mates y salí a caminar un rato por el barrio. Estaba lindo el día, con sol y un poco de viento. A la tarde paso a verte y charlamos tranquilos.';
+  const voiceSt = { mr: null, timer: null, again: false };
+  async function toWav(blob) {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = await ac.decodeAudioData(await blob.arrayBuffer());
+    ac.close?.();
+    const n = buf.length, rate = buf.sampleRate, mono = new Float32Array(n);
+    for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < n; i++) mono[i] += d[i] / buf.numberOfChannels; }
+    const v = new DataView(new ArrayBuffer(44 + n * 2));
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true);
+    v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) { const s = Math.max(-1, Math.min(1, mono[i])); v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true); }
+    return new Blob([v], { type: 'audio/wav' });
+  }
+  function renderVoice() {
+    const has = D.me.has_voice;
+    $('#msgOwnBox').hidden = !has; $('#remOwnBox').hidden = !has;
+    if (voiceSt.mr) return; // no pisar la grabación en curso
+    const off = D.features?.voice ? '' : '<p class="hint">El servicio de voz no está prendido en el servidor. Podés grabar igual; mientras tanto, Tata dice los mensajes con su voz.</p>';
+    if (has && !voiceSt.again) {
+      $('#voiceCard').innerHTML = `<p style="margin:0">✓ Tu voz está guardada. Al mandar un mensaje o crear un recordatorio podés elegir “Que lo diga con mi voz”.</p>
+        <p class="hint">Antes de tu voz, Tata siempre aclara que el mensaje es tuyo. Lo que hable de plata, bancos o claves lo dice Tata con su propia voz.</p>${off}
+        <div class="rec" id="voiceOut"></div>
+        <div class="row"><button class="btn small" type="button" data-v="test">Escuchar cómo suena</button><button class="btn small" type="button" data-v="again">Grabar de nuevo</button><button class="btn small danger" type="button" data-v="del">Borrar mi voz</button></div>`;
+      return;
+    }
+    $('#voiceCard').innerHTML = `<p style="margin:0">Grabá tu voz una vez y Tata le va a poder decir tus mensajes y recordatorios <b>con tu voz</b>, para que ${esc(D.household.elder_name)} la reconozca.</p>
+      <p class="hint">Buscá un lugar sin ruido, apretá Grabar y leé este texto tranquilo, con tu forma de hablar de siempre (entre 10 y 30 segundos):</p>
+      <blockquote class="readme">${esc(VOICE_TEXT)}</blockquote>
+      <label class="set"><input type="checkbox" id="voiceConsent"><span>Doy mi consentimiento para que Tata use esta grabación para decir, con mi voz, los mensajes y recordatorios que yo escriba.
+        <small>Tata siempre aclara que el mensaje es tuyo, nunca usa tu voz para temas de plata o claves, y la podés borrar cuando quieras.</small></span></label>${off}
+      <div class="row"><button class="btn primary recbtn" type="button" data-v="rec" disabled>🎙 Grabar mi voz</button>${voiceSt.again ? '<button class="btn small" type="button" data-v="cancel">Cancelar</button>' : ''}<span class="hint" id="voiceHint"></span></div>`;
+  }
+  $('#voiceCard').addEventListener('change', e => {
+    if (e.target.id === 'voiceConsent') $('#voiceCard [data-v=rec]').disabled = !e.target.checked;
+  });
+  $('#voiceCard').addEventListener('click', async e => {
+    const b = e.target.closest('[data-v]'); if (!b) return;
+    const act = b.dataset.v;
+    if (act === 'again') { voiceSt.again = true; renderVoice(); return; }
+    if (act === 'cancel') { voiceSt.again = false; renderVoice(); return; }
+    if (act === 'del') {
+      if (!confirm('¿Borrar tu voz de Tata?')) return;
+      await del('/api/familia/voice'); voiceSt.again = false; await load(); toast('Tu voz se borró'); return;
+    }
+    if (act === 'test') {
+      b.disabled = true; b.textContent = 'Generando… (puede tardar)';
+      try {
+        const r = await fetch('/api/familia/voice/test', { method: 'POST', headers: { authorization: 'Bearer ' + token } });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'No se pudo');
+        $('#voiceOut').innerHTML = `<audio controls autoplay src="${URL.createObjectURL(await r.blob())}"></audio>`;
+      } catch (x) { toast(x.message); }
+      b.disabled = false; b.textContent = 'Escuchar cómo suena';
+      return;
+    }
+    if (act !== 'rec') return;
+    const hint = $('#voiceHint');
+    if (voiceSt.mr) { voiceSt.mr.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true } });
+      const chunks = [];
+      voiceSt.mr = new MediaRecorder(stream);
+      voiceSt.mr.ondataavailable = ev => ev.data.size && chunks.push(ev.data);
+      const t0 = Date.now();
+      voiceSt.mr.onstop = async () => {
+        clearInterval(voiceSt.timer); stream.getTracks().forEach(t => t.stop()); voiceSt.mr = null;
+        const secs = (Date.now() - t0) / 1000;
+        b.classList.remove('on'); b.textContent = '🎙 Grabar mi voz';
+        if (secs < 8) { hint.textContent = 'Fue muy corto: leé el texto completo (al menos 10 segundos).'; return; }
+        hint.textContent = 'Guardando…';
+        try {
+          const wav = await toWav(new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' }));
+          await api('/api/familia/voice?consent=1', { method: 'POST', body: wav, headers: { 'content-type': 'audio/wav' } });
+          voiceSt.again = false; await load(); toast('¡Listo! Tu voz quedó guardada');
+        } catch (x) { hint.textContent = x.message; }
+      };
+      voiceSt.mr.start();
+      b.classList.add('on'); b.textContent = '■ Terminé';
+      voiceSt.timer = setInterval(() => {
+        const s = Math.floor((Date.now() - t0) / 1000);
+        hint.textContent = `Grabando… 0:${String(s).padStart(2, '0')}`;
+        if (s >= 30) voiceSt.mr?.stop();
+      }, 250);
+    } catch { hint.textContent = 'No pude usar el micrófono.'; }
   });
 
   // ---------- ajustes ----------

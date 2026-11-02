@@ -14,7 +14,7 @@
   let es = null;              // EventSource
   let speaking = false, queue = [], convoUntil = 0;
   let rate = Number(store.get('tata.rate')) || 0.92;
-  let always = store.get('tata.always') === '1';
+  let always = store.get('tata.always') !== '0'; // como un parlante: escucha siempre salvo que lo apaguen
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   const show = id => ['pairView', 'startView', 'homeView'].forEach(v => { $('#' + v).hidden = v !== id; });
@@ -53,7 +53,9 @@
     await loadState();
     connect();
     if (always) startAlways();
-    say([{ text: `Hola, ${info.elder_name}. Acá estoy. Cuando quieras, tocá el botón y hablame.` }]);
+    say([{ text: always && SR
+      ? `Hola, ${info.elder_name}. Acá estoy. Cuando me necesites, decí Tata y lo que quieras. Si necesitás ayuda, mantené apretado mi botón.`
+      : `Hola, ${info.elder_name}. Acá estoy. Tocame para hablar, y si necesitás ayuda, mantené apretado mi botón.` }]);
   });
 
   let wake = null;
@@ -66,7 +68,6 @@
   async function loadState() {
     info = await api('/api/casa/state');
     render(info.ui);
-    tick();
   }
   function connect() {
     es?.close();
@@ -82,20 +83,8 @@
   }
   function setConn(on) {
     const c = $('#conn'); c.className = 'conn ' + (on ? 'on' : 'off');
-    c.querySelector('span').textContent = on ? 'Conectada' : 'Sin conexión';
+    c.title = on ? 'Conectada' : 'Sin conexión';
   }
-
-  // ---------- reloj ----------
-  const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-  function tick() {
-    if (!info) return;
-    const tz = info.timezone;
-    const now = new Date();
-    $('#clock').textContent = now.toLocaleTimeString('es-AR', { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-    const d = now.toLocaleDateString('es-AR', { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long' });
-    $('#date').textContent = d.charAt(0).toUpperCase() + d.slice(1).replace(',', '');
-  }
-  setInterval(tick, 5000);
 
   // ---------- pantalla ----------
   function render(ui) {
@@ -119,23 +108,20 @@
 
     $('#chips').innerHTML = ui.chips.map(c => `<button type="button" class="chip" data-say="${esc(c)}">${esc(c)}</button>`).join('');
     if (ui.chips.length) convoUntil = Date.now() + 25000;
-
-    $('#today').innerHTML = ui.today.length ? `<h2>Hoy</h2><ul>${ui.today.map(r =>
-      `<li class="${r.past ? 'past' : ''} ${r.done ? 'done' : ''}"><span class="tm">${esc(r.at)}</span><span>${esc(r.label)}</span>${r.done ? '<span class="ok">✓ Hecho</span>' : ''}</li>`).join('')}</ul>` : '';
   }
   function setMode(m) {
     const sosOpen = info?.ui?.sos?.state === 'open';
-    $('#tata').dataset.mode = m === 'idle' && sosOpen ? 'alert' : m;
-    $('#status').textContent = m === 'speaking' ? 'Tata está hablando' : m === 'listening' ? 'Te escucho…' : m === 'thinking' ? 'Un momento…'
-      : always ? 'Decí “Tata” y lo que necesites' : 'Tocá el botón y hablame';
+    const mode = m === 'idle' && sosOpen ? 'alert' : m;
+    $('#tata').dataset.mode = mode; $('#device').dataset.mode = mode;
+    $('#status').textContent = m === 'speaking' ? '' : m === 'listening' ? 'Te escucho…' : m === 'thinking' ? 'Un momento…'
+      : wantAlways ? 'Decí “Tata” o tocame' : 'Tocame para hablar';
   }
+  // Lo último que se dijo, en letras grandes (ayuda si no escucha bien). Se apaga solo.
   function addLine(who, text) {
-    const log = $('#log'); const d = document.createElement('div');
-    d.className = 'ln ' + who;
-    d.innerHTML = `<span class="who">${who === 'me' ? esc(info?.elder_name || 'Vos') : 'Tata'}</span><p>${esc(text)}</p>`;
-    log.appendChild(d);
-    while (log.children.length > 4) log.removeChild(log.firstChild);
-    d.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const c = $('#caption');
+    c.textContent = who === 'me' ? `“${text}”` : text;
+    c.className = 'caption' + (who === 'me' ? ' me' : '');
+    clearTimeout(addLine.t); addLine.t = setTimeout(() => { if (!speaking) c.classList.add('fade'); }, 15000);
   }
   function showAction(a) {
     const box = $('#action');
@@ -196,7 +182,7 @@
   // ---------- escuchar ----------
   async function send(text) {
     text = text.trim(); if (!text) return;
-    addLine('me', text); $('#heard').textContent = '';
+    addLine('me', text);
     setMode('thinking');
     try {
       const r = await api('/api/casa/hear', { method: 'POST', body: JSON.stringify({ text }) });
@@ -216,12 +202,12 @@
         const res = ev.results[i];
         if (res.isFinal) final += res[0].transcript; else interim += res[0].transcript;
       }
-      if (interim && (!continuous || Date.now() < convoUntil || /\btata\b/i.test(interim))) $('#heard').textContent = interim;
+      if (interim && (!continuous || Date.now() < convoUntil || /\btata\b/i.test(interim))) addLine('me', interim);
       if (final) onFinal(final, continuous);
     };
     r.onerror = ev => { if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { wantAlways = false; showTypeFallback(); } };
     r.onend = () => {
-      recOn = false; $('#talkBtn').classList.remove('on'); $('#talkTxt').textContent = 'Hablar';
+      recOn = false;
       if (!speaking) setMode('idle');
       if (continuous && wantAlways && !speaking) setTimeout(() => { if (wantAlways && !speaking && !recOn) startRec(true); }, 300);
     };
@@ -231,12 +217,12 @@
     if (!continuous) { send(text); return; }
     const hasWake = /\btata\b/i.test(text);
     if (hasWake || Date.now() < convoUntil) send(hasWake ? text.replace(/^.*?\btata\b[,\s]*/i, '') || 'hola' : text);
-    else $('#heard').textContent = '';
+    else $('#caption').classList.add('fade');
   }
   function startRec(continuous) {
     if (!SR || recOn) return;
     try { rec = makeRec(continuous); rec.start(); recOn = true; } catch { recOn = false; }
-    if (!continuous) { $('#talkBtn').classList.add('on'); $('#talkTxt').textContent = 'Te escucho'; setMode('listening'); }
+    if (!continuous) setMode('listening');
   }
   function pauseListening() { if (recOn) { try { rec.abort(); } catch {} recOn = false; } }
   function resumeListening() { if (wantAlways) startRec(true); }
@@ -244,19 +230,41 @@
   function stopAlways() { wantAlways = false; pauseListening(); setMode('idle'); }
   function showTypeFallback() { $('#typeForm').hidden = false; $('#optType').checked = true; }
 
-  $('#talkBtn').addEventListener('click', () => {
+  // Un toque: hablar. Mantener apretado 2 segundos: pedir ayuda (el aro se llena de rojo).
+  const HOLD_MS = 2000;
+  const dev = $('#device');
+  dev.style.setProperty('--hold', HOLD_MS + 'ms');
+  let holdT = null, holdStart = 0;
+  dev.addEventListener('pointerdown', e => {
+    if (e.button > 0) return;
+    holdStart = Date.now(); dev.classList.add('holding');
+    holdT = setTimeout(() => { holdT = null; dev.classList.remove('holding'); navigator.vibrate?.(200); askHelp(); }, HOLD_MS);
+  });
+  const endHold = () => {
+    dev.classList.remove('holding');
+    if (!holdT) return;
+    clearTimeout(holdT); holdT = null;
+    if (Date.now() - holdStart < 600) talk();
+  };
+  dev.addEventListener('pointerup', endHold);
+  dev.addEventListener('pointerleave', endHold);
+  dev.addEventListener('pointercancel', endHold);
+  dev.addEventListener('contextmenu', e => e.preventDefault());
+  dev.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); talk(); } });
+
+  function talk() {
     if (!SR) { showTypeFallback(); $('#typeInput').focus(); return; }
     speechSynthesis.cancel(); queue = []; speaking = false;
     if (recOn && !wantAlways) { rec.stop(); return; }
     pauseListening();
     convoUntil = Date.now() + 25000;
     startRec(false);
-  });
-  $('#sosBtn').addEventListener('click', async () => {
+  }
+  async function askHelp() {
     speechSynthesis.cancel(); queue = []; speaking = false;
     try { const r = await api('/api/casa/sos', { method: 'POST' }); info.ui = r.ui; render(r.ui); say(r.replies); }
     catch { say([{ text: 'No me pude conectar. Si es urgente, llamá al ' + (info?.emergency_phone || '107') + '.' }]); showAction({ type: 'dial', phone: info?.emergency_phone || '107', label: 'Llamar al ' + (info?.emergency_phone || '107') }); }
-  });
+  }
   $('#chips').addEventListener('click', e => { const b = e.target.closest('[data-say]'); if (b) send(b.dataset.say); });
   $('#typeForm').addEventListener('submit', e => { e.preventDefault(); const i = $('#typeInput'); send(i.value); i.value = ''; });
 
@@ -269,6 +277,9 @@
   $('#optRate').value = rate;
   $('#optRate').addEventListener('change', e => { rate = Number(e.target.value); store.set('tata.rate', String(rate)); });
   $('#optTest').addEventListener('click', () => say([{ text: `Hola, ${info?.elder_name || ''}. Así suena mi voz.` }]));
+  $('#gearBtn').addEventListener('click', () => { $('#opts').hidden = false; });
+  $('#optClose').addEventListener('click', () => { $('#opts').hidden = true; });
+  $('#opts').addEventListener('click', e => { if (e.target.id === 'opts') $('#opts').hidden = true; });
 
   // ---------- inicio ----------
   if (!token) show('pairView');

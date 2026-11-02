@@ -8,6 +8,8 @@ import { createPush } from './push.js';
 import { handle, sos, uiState } from './brain.js';
 import { startScheduler } from './scheduler.js';
 import { parseHHMM, fmtMin } from './time.js';
+import { createAi } from './ai.js';
+import { createVoice, risky } from './voice.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -18,11 +20,12 @@ const bad = msg => { throw new HttpError(400, msg); };
 const str = (v, max = 200) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const bool = v => (v ? 1 : 0);
 
-export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', clock, withPush = true } = {}) {
+export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', clock, withPush = true, ai = createAi(), voice = createVoice() } = {}) {
   const db = openDb(dbFile);
   const q = makeQ(db);
   const push = withPush ? createPush(q) : null;
   const core = createCore({ q, push, clock });
+  core.ai = ai;
 
   // ---------- ayudantes ----------
   const json = (res, status, body) => {
@@ -71,7 +74,9 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
   function familyView(member, hh) {
     const now = core.now(hh);
     return {
-      me: { id: member.id, name: member.name, relation: member.relation, phone: member.phone, is_admin: !!member.is_admin, gets_alerts: !!member.gets_alerts },
+      me: { id: member.id, name: member.name, relation: member.relation, phone: member.phone, is_admin: !!member.is_admin, gets_alerts: !!member.gets_alerts,
+        has_voice: !!q.get('SELECT 1 FROM voices WHERE member_id = ?', member.id) },
+      features: { ai: !!core.ai, voice: !!voice?.ready },
       household: {
         elder_name: hh.elder_name, timezone: hh.timezone, device_code: hh.device_code, paired: !!hh.device_token,
         device_phone: hh.device_phone, emergency_phone: hh.emergency_phone,
@@ -111,6 +116,20 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
     if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) bad('Fecha inválida');
     const days = date ? '' : (str(b.days, 7).replace(/[^0-6]/g, '') || '0123456');
     return { label, say: str(b.say, 200) || label.toLowerCase(), at, date, days, is_med: bool(b.is_med) };
+  }
+  /** Genera `text` con la voz clonada del familiar. Devuelve { id } del audio o { reason } si no corresponde. */
+  async function inVoice(member, hh, text) {
+    const v = q.get('SELECT wav FROM voices WHERE member_id = ?', member.id);
+    if (!v || !voice) return { reason: 'Todavía no grabaste tu voz (Ajustes).' };
+    if (risky(text)) return { reason: 'Habla de plata, bancos o claves: por seguridad Tata lo dice con su propia voz.' };
+    if (!(await voice.check())) return { reason: 'El servicio de voz no está andando: lo dijo Tata.' };
+    try {
+      const wav = await voice.speak(text, v.wav);
+      return { id: Number(q.run('INSERT INTO audio (household_id, mime, data, created_at) VALUES (?, ?, ?, ?)', hh.id, 'audio/wav', wav, core.ts()).lastInsertRowid) };
+    } catch (e) {
+      console.error('voz', e.message);
+      return { reason: 'No se pudo generar tu voz: lo dijo Tata.' };
+    }
   }
   function audioOf(hh, id) {
     if (id == null || id === '') return null;
@@ -174,9 +193,14 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
 
     ['POST', '/api/familia/reminders', async (req, url) => {
       const { member, hh } = authMember(req, url); const b = await readJson(req); const f = reminderFields(b);
+      let audioId = audioOf(hh, b.audio_id), voiceNote = null;
+      if (!audioId && b.own_voice) {
+        const v = await inVoice(member, hh, `${hh.elder_name}, ${f.say.charAt(0).toUpperCase() + f.say.slice(1)}.`);
+        audioId = v.id || null; voiceNote = v.reason || null;
+      }
       const r = q.run('INSERT INTO reminders (household_id, label, say, at, days, date, is_med, audio_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        hh.id, f.label, f.say, f.at, f.days, f.date, f.is_med, audioOf(hh, b.audio_id), member.id);
-      changed(hh); return [201, { id: Number(r.lastInsertRowid) }];
+        hh.id, f.label, f.say, f.at, f.days, f.date, f.is_med, audioId, member.id);
+      changed(hh); return [201, { id: Number(r.lastInsertRowid), voiceNote }];
     }],
     ['PATCH', '/api/familia/reminders/:id', async (req, url, res, p) => {
       const { hh } = authMember(req, url); const b = await readJson(req);
@@ -274,10 +298,41 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
       const text = str(b.text, 300); const audioId = audioOf(hh, b.audio_id);
       if (!text && !audioId) bad('El mensaje está vacío');
       const spoken = text ? `${hh.elder_name}, te manda un mensaje ${member.name}: ${text}` : `${hh.elder_name}, te mandó un audio ${member.name}.`;
-      const items = audioId ? [{ text: `${hh.elder_name}, te mandó un audio ${member.name}.` }, { text: spoken, audio: `/api/casa/audio/${audioId}` }] : [{ text: spoken }];
+      let items = audioId ? [{ text: `${hh.elder_name}, te mandó un audio ${member.name}.` }, { text: spoken, audio: `/api/casa/audio/${audioId}` }] : [{ text: spoken }];
+      let voiceNote = null;
+      if (!audioId && text && b.own_voice) {
+        // Tata presenta el mensaje con su voz y después se escucha la voz del familiar.
+        const v = await inVoice(member, hh, text);
+        if (v.id) items = [{ text: `${hh.elder_name}, ${member.name} te dejó dicho:` }, { text, audio: `/api/casa/audio/${v.id}` }];
+        else voiceNote = v.reason;
+      }
       const delivered = core.say(hh, items);
       core.notify(hh, 'info', `${member.name} le mandó un mensaje a ${hh.elder_name}`, delivered ? (text || 'Audio') : 'Tata está desconectada: no le llegó.');
-      return [200, { delivered }];
+      return [200, { delivered, voiceNote }];
+    }],
+
+    // Voz del familiar para Tata: una muestra WAV de 10 a 30 segundos, solo con consentimiento explícito.
+    ['POST', '/api/familia/voice', async (req, url) => {
+      const { member } = authMember(req, url);
+      if (url.searchParams.get('consent') !== '1') bad('Falta tu consentimiento');
+      const mime = String(req.headers['content-type'] || '').split(';')[0];
+      const wav = await readBody(req, 6 * 1024 * 1024);
+      if (mime !== 'audio/wav' || wav.subarray(0, 4).toString('latin1') !== 'RIFF') bad('Tiene que ser un WAV');
+      q.run('INSERT INTO voices (member_id, wav, consent_at) VALUES (?, ?, ?) ON CONFLICT(member_id) DO UPDATE SET wav = excluded.wav, consent_at = excluded.consent_at',
+        member.id, wav, core.ts());
+      return [200, { ok: true }];
+    }],
+    ['DELETE', '/api/familia/voice', (req, url) => {
+      const { member } = authMember(req, url);
+      q.run('DELETE FROM voices WHERE member_id = ?', member.id);
+      return [200, { ok: true }];
+    }],
+    ['POST', '/api/familia/voice/test', async (req, url, res) => {
+      const { member, hh } = authMember(req, url);
+      const v = await inVoice(member, hh, `Hola ${hh.elder_name}, soy ${member.name}. Así va a sonar mi voz en Tata.`);
+      if (!v.id) throw new HttpError(503, v.reason);
+      sendAudio(res, hh, v.id);
+      q.run('DELETE FROM audio WHERE id = ?', v.id); // la prueba no se guarda
     }],
 
     ['POST', '/api/familia/sos/coming', (req, url) => {

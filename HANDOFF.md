@@ -26,14 +26,14 @@ Este MVP lleva eso a dos apps reales conectadas a un servidor:
   - Habla con `speechSynthesis`.
   - Los audios grabados por la familia se graban con `MediaRecorder` y se guardan como BLOB en SQLite.
 - **Notificaciones**: Web Push con VAPID. Las claves se generan solas la primera vez y se guardan en la tabla `settings`. El service worker está en `public/familia/sw.js`.
-- **Tests**: `node:test` (`npm test`), con 14 tests de lógica y reloj simulado.
+- **Tests**: `node:test` (`npm test`), con 19 tests de lógica y reloj simulado.
 
 ## Decisiones tomadas (y por qué)
 
 1. **Web primero, sin hardware propio.** El "parlante" es una tablet o celular viejo en modo pantalla completa. Así se valida el producto sin fabricar nada. El parlante físico, que podría ser una Raspberry Pi con micrófono y botones, queda para después.
 2. **El cerebro vive en el servidor** (`server/brain.js`). La casa manda el texto que escuchó y recibe qué decir. El estado de la charla (preguntas pendientes, modo paso a paso) queda guardado en el hogar, así que sobrevive a recargas.
-3. **Reglas, no IA, para entender.** Las frases son cortas y predecibles, y en temas de salud y emergencias conviene que la respuesta sea determinística y testeable. Sumar Claude como respaldo para frases no reconocidas es un próximo paso natural.
-4. **"La voz de Laura" sin clonar voces.** El prototipo simulaba la voz de Laura. En el MVP, la familia **graba su propia voz** para un recordatorio o un mensaje, y Tata reproduce ese audio. Es real, con consentimiento explícito y sin riesgos de voz sintética.
+3. **Reglas primero, Claude de respaldo.** SOS, pastillas, turnos y llamadas son reglas determinísticas y testeables (`server/brain.js`). Lo que no matchea ninguna regla va a Claude (`server/ai.js`), que charla y tiene 4 herramientas: avisar a un familiar, crear un recordatorio, recordar un dato y pedir ayuda (dispara el mismo SOS). Con Claude activo, las reglas de charla (saludos, "estoy bien", "me siento sola") solo aplican a frases de hasta 5 palabras. El historial con Claude es solo de agregar: tras 30 minutos sin charlar, o si falla, arranca una charla nueva.
+4. **La voz del familiar, con cuidado.** El familiar graba 10–30 s en la app (WAV, con consentimiento) y Chatterbox Multilingual (MIT, local, `voz/servidor.py`) genera sus mensajes y recordatorios con su voz. Tata siempre lo presenta ("Laura te dejó dicho"), lo que habla de plata o claves va con la voz de Tata (`server/voice.js`), y Claude nunca habla con voz clonada. Los audios grabados a mano siguen funcionando igual.
 5. **Llamadas honestas.** Una web no puede hacer llamadas telefónicas. Cuando ella dice "llamá a Laura", Tata le manda un push a Laura ("quiere hablar con vos") y en la casa muestra un botón grande `tel:`. Ese botón funciona si el dispositivo tiene línea. Con emergencias pasa lo mismo: aviso a toda la familia y botón para llamar al 107, que se puede configurar.
 6. **Primero se le pregunta a ella.** Si a la mañana no hubo actividad, Tata pregunta "¿Cómo amaneciste?" y espera 15 minutos antes de avisar a la familia. Si después habla, la familia recibe "ya habló con Tata". La ventana de chequeo es de 3 horas desde la hora configurada.
 7. **Pastillas con seguimiento.** Tata recuerda a la hora configurada. Si no hay confirmación, pregunta de nuevo a los 30 minutos y avisa a la familia a la hora. Un recordatorio con más de 60 minutos de atraso, por ejemplo porque el servidor estuvo caído, no se dice.
@@ -73,7 +73,7 @@ Este MVP lleva eso a dos apps reales conectadas a un servidor:
   - Grabar voz.
   - Mandar mensajes que Tata dice en voz alta.
   - Ajustes y activación de push.
-- Tests: `npm test` da 14/14. Además se hizo una prueba de punta a punta en Chromium: crear hogar → vincular casa → SOS por voz → overlay en el celular → "voy en camino" → la casa muestra "Laura ya está en camino".
+- Tests: `npm test` da 19/19. Además se hizo una prueba de punta a punta en Chromium: crear hogar → vincular casa → SOS por voz → overlay en el celular → "voy en camino" → la casa muestra "Laura ya está en camino".
 
 **No probado todavía:**
 
@@ -102,9 +102,11 @@ test/tata.test.js       Tests de la lógica con reloj simulado.
 
 ## Próximos pasos sugeridos
 
+0. **Pantalla de la casa = solo el parlante** (hecho): escucha siempre con "Tata", un toque para hablar, mantener apretado 2 s para SOS.
+
 1. **Publicarlo con HTTPS** (Render, Railway o Fly.io, con disco persistente para `data/`) y probar push y micrófono en celulares reales.
 2. **Piloto con 1 o 2 familias.** Medir cuántas frases no entiende (sumar un log de "no entendí"), si confirman la pastilla y cuántos falsos avisos de inactividad hay.
-3. **Respaldo con Claude** para las frases que no matchean ninguna regla, sin tocar SOS ni pastillas.
+3. **(Hecho) Respaldo con Claude** para las frases que no matchean ninguna regla, sin tocar SOS ni pastillas.
 4. **Seguridad para producción:**
    - Tokens con vencimiento y revocación.
    - Límite de intentos en `/api/casa/pair`.
@@ -115,6 +117,7 @@ test/tata.test.js       Tests de la lógica con reloj simulado.
 6. **Editar** recordatorios y turnos desde la app (hoy solo se pueden crear, pausar y borrar). El endpoint `PATCH` ya existe.
 7. **Más guías paso a paso**, cargables por la familia.
 8. **Hardware:** Raspberry Pi + micrófono de conferencia + botón SOS físico, corriendo la misma `/casa/` en modo kiosco.
+9. **VoiceStudio como motor de voz (en la rama `dev`).** El código está hecho y testeado, pero falta probarlo con voces reales. Detalles y pasos pendientes en el HANDOFF de esa rama.
 
 ## Cómo seguir con Claude Code en tu terminal
 
