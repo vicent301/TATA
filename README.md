@@ -75,6 +75,7 @@ Solo el parlante de Tata en el centro, como un Echo:
 Tata es parte de **Órbita**, la alianza entre Tata y **Encuentro**: además de la pastilla, le ayuda a no estar sola.
 
 - **La cartelera de Encuentro la arma Órbita** en el panel `/orbita/`: qué, dónde, cuándo (días de la semana o una fecha), precio, teléfono y etiquetas. El panel se protege con la variable `ORBITA_KEY`; si no está, el panel no existe.
+- **Actividades de ejemplo:** cada vez que arranca el servidor, Tata borra las de ejemplo anteriores y arma 5 nuevas por cada ciudad donde vive alguien (y al cargar una ciudad nueva en Ajustes). No son reales: no tienen dirección ni teléfono, y las que carga Órbita no se tocan (`server/encuentro.js`).
 - **La familia carga en Ajustes dónde vive** (ciudad y barrio) **y qué le interesa** ("Talleres", "tango", "recetas"). En la pestaña **Encuentro** ve lo que hay cerca y lo que a ella le interesó.
 - **El resumen de la mañana:** la primera vez que ella le habla a Tata entre las 6 y las 13, Tata le contesta y suma, si hay, la pastilla pendiente, el clima o una noticia liviana, y una actividad de su ciudad ("Hoy a las 17 hay taller de tejido en el centro vecinal. ¿Te interesa?"). Tata nunca arranca a hablar sola para esto, para no asustarla.
 - **Actividades:** primero las de su barrio, después las que coinciden con sus intereses, después la más próxima; solo de hoy o mañana. Si dice que sí, Tata le da los datos y la familia recibe un aviso. Si dice que no, no insiste.

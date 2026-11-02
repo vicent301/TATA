@@ -238,7 +238,7 @@ test('una base vieja suma las columnas nuevas sin perder datos', () => {
 });
 
 // ---------- Encuentro: qué actividad sugerir ----------
-import { pickActivity, upcoming, offerText, detailsText, answer } from '../server/encuentro.js';
+import { pickActivity, upcoming, offerText, detailsText, answer, seedActivities, ensureActivities } from '../server/encuentro.js';
 
 function act(t, f = {}) {
   const a = { title: 'Taller de tejido', place: 'Centro vecinal', address: '', city: 'Córdoba', barrio: '', at: 1020, days: '0123456', date: null, price: '', phone: '', tags: '', ...f };
@@ -297,6 +297,29 @@ test('Encuentro: cómo lo dice Tata, y la familia se entera si le interesa', () 
   assert.equal(t.events().at(-1).title, 'A Elsa le interesó una actividad');
   assert.ok(t.pushed.some(p => p.title === 'A Elsa le interesó una actividad'));
   assert.equal(upcoming(t.core, t.hh(), 7).length, 7);
+});
+
+test('actividades de ejemplo: 5 por ciudad al arrancar, nuevas cada vez, sin tocar las de Órbita', () => {
+  const t = setup('2026-10-19T20:00:00-03:00'); // lunes de noche: las de hoy ya pasaron
+  const auto = () => t.q.all('SELECT * FROM activities WHERE auto = 1');
+  seedActivities(t.core);
+  assert.equal(auto().length, 0); // sin ciudad no arma nada
+  live(t, 'Córdoba', 'Alta Córdoba');
+  const mine = act(t, { title: 'Tango de Órbita' });
+  seedActivities(t.core);
+  const first = auto();
+  assert.equal(first.length, 5);
+  assert.ok(first.every(a => a.city === 'Córdoba' && a.days.includes('1') && a.days.includes('2')));
+  assert.equal(first.filter(a => a.barrio === 'Alta Córdoba').length, 2);
+  assert.ok(pickActivity(t.core, t.hh())); // mañana hay algo para sugerir
+  seedActivities(t.core);
+  assert.equal(auto().length, 5); // las anteriores se borran: no se acumulan
+  assert.ok(t.q.get('SELECT 1 FROM activities WHERE id = ?', mine));
+  ensureActivities(t.core, t.hh());
+  assert.equal(auto().length, 5); // ya hay en su ciudad: no duplica
+  live(t, 'Rosario');
+  ensureActivities(t.core, t.hh());
+  assert.equal(auto().filter(a => a.city === 'Rosario').length, 5);
 });
 
 // ---------- Servidor HTTP de prueba ----------
@@ -385,7 +408,8 @@ test('familia: ve lo que hay cerca y lo que le interesó', async () => {
     await s.call('PATCH', '/api/familia/household', { city: 'Córdoba' }, tk);
     s.q.run("INSERT INTO activities (title, place, city, at, days, created_at) VALUES ('Tejido', 'Centro', 'Córdoba', 1439, '0123456', 0)");
     const me = (await s.call('GET', '/api/familia/me', null, tk)).body;
-    assert.equal(me.encuentro.upcoming[0].title, 'Tejido');
+    assert.ok(me.encuentro.upcoming.some(u => u.title === 'Tejido'));
+    assert.equal(s.q.get('SELECT COUNT(*) AS n FROM activities WHERE auto = 1').n, 5); // cargar la ciudad arma las de ejemplo
     assert.deepEqual(me.encuentro.liked, []);
   } finally { await s.close(); }
 });

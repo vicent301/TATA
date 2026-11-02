@@ -207,7 +207,8 @@ const ADDED = [
   ['days', 'briefed', 'INTEGER'],
   ['days', 'prepared', 'INTEGER'],
   ['days', 'news', 'TEXT'],
-  ['days', 'weather', 'TEXT']
+  ['days', 'weather', 'TEXT'],
+  ['activities', 'auto', 'INTEGER NOT NULL DEFAULT 0']
 ];
 
 export function migrate(db) {
