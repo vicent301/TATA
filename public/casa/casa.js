@@ -33,7 +33,7 @@
     e.preventDefault();
     const err = $('#pairErr'); err.hidden = true;
     try {
-      const r = await fetch('/api/casa/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: $('#pairCode').value }) });
+      const r = await fetch('/api/casa/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: $('#pairCode').value, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'No se pudo vincular');
       token = j.token; store.set('tata.device', token);
