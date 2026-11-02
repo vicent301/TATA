@@ -27,7 +27,7 @@ Este MVP lleva eso a dos apps reales conectadas a un servidor:
   - Habla con `speechSynthesis`.
   - Los audios grabados por la familia se graban con `MediaRecorder` y se guardan como BLOB en SQLite.
 - **Notificaciones**: Web Push con VAPID. Las claves se generan solas la primera vez y se guardan en la tabla `settings`. El service worker está en `public/familia/sw.js`.
-- **Tests**: `node:test` (`npm test`), con 19 tests de lógica y reloj simulado.
+- **Tests**: `node:test` (`npm test`), con 41 tests de lógica y del servidor, con reloj y red simulados.
 
 ## Decisiones tomadas (y por qué)
 
@@ -40,6 +40,12 @@ Este MVP lleva eso a dos apps reales conectadas a un servidor:
 7. **Pastillas con seguimiento.** Tata recuerda a la hora configurada. Si no hay confirmación, pregunta de nuevo a los 30 minutos y avisa a la familia a la hora. Un recordatorio con más de 60 minutos de atraso, por ejemplo porque el servidor estuvo caído, no se dice.
 8. **Acceso sin contraseñas.** Cada familiar entra con un link personal (`/familia/#t=TOKEN`) que queda en `localStorage`. La casa se vincula con un código de 6 dígitos que se renueva cada vez que se usa. Alcanza para un piloto, pero no para producción (ver próximos pasos).
 9. **Todo en la zona horaria del hogar** (`server/time.js`), no en la del servidor. No se le pregunta a nadie: al crear el hogar se toma la del navegador de quien lo crea, y al vincular la tablet se reemplaza por la de la tablet (`POST /api/casa/pair`), porque es la que está en la casa. Si no llega una válida, queda `America/Argentina/Cordoba`. Hoy no se puede cambiar desde la app, aunque el `PATCH /api/familia/household` la acepta.
+10. **Encuentro y la mañana: la otra mitad de Órbita.** Tata es parte de Órbita, la alianza con Encuentro; la necesidad de Elsa no es solo la pastilla sino también el aislamiento.
+   - **Cartelera compartida que arma Órbita** (`/orbita/`, con `ORBITA_KEY`), no cada familia: así hay actividades reales del barrio sin que la familia tenga que buscarlas.
+   - **Tata sugiere directo y la familia se entera solo si a ella le interesa**: "acompañar, no monitorear"; ella decide sola.
+   - **El resumen de la mañana espera a que ella hable primero** (entre las 6 y las 13): un parlante que habla solo en una casa en silencio la puede asustar. El único caso en que Tata habla sola sigue siendo el chequeo de inactividad.
+   - **Noticias solo de sus intereses y livianas, elegidas por Claude** sobre titulares reales (RSS de Google Noticias), preparadas a la madrugada para no hacerla esperar. Si algo falla, no hay noticia; nunca se inventa. El clima es de Open-Meteo (gratis, sin clave).
+   - **Prioridad de actividades:** su barrio, después sus intereses, después la más próxima; solo hoy o mañana. Con "no", no se le vuelve a ofrecer esa actividad ese día.
 
 ## Estado actual
 
@@ -47,6 +53,7 @@ Este MVP lleva eso a dos apps reales conectadas a un servidor:
 
 - Crear un hogar, invitar familiares (link + WhatsApp), cargar contactos (vecina, amigos).
 - Vincular la casa con un código de 6 dígitos. La zona horaria se toma sola, sin preguntar.
+- Encuentro: panel `/orbita/`, ciudad, barrio e intereses en Ajustes, pestaña Encuentro, resumen de la mañana con pastilla, clima o noticia y actividad, y aviso a la familia si le interesa. Probado con tests y a mano contra el servidor (clima real de Open-Meteo). Las noticias reales con Claude todavía no se probaron, porque no había clave.
 - Pantalla de la casa: solo el parlante de Tata en el centro. Un toque para hablar, mantener apretado 2 s para SOS, y lo que dice en letras grandes.
 - Escuchar:
   - Tocar para hablar.
@@ -75,7 +82,7 @@ Este MVP lleva eso a dos apps reales conectadas a un servidor:
   - Grabar voz.
   - Mandar mensajes que Tata dice en voz alta.
   - Ajustes y activación de push.
-- Tests: `npm test` da 19/19. Además se hizo una prueba de punta a punta en Chromium: crear hogar → vincular casa → SOS por voz → overlay en el celular → "voy en camino" → la casa muestra "Laura ya está en camino".
+- Tests: `npm test` da 41/41. Además se hizo una prueba de punta a punta en Chromium: crear hogar → vincular casa → SOS por voz → overlay en el celular → "voy en camino" → la casa muestra "Laura ya está en camino".
 
 **No probado todavía:**
 
@@ -96,11 +103,14 @@ server/
   time.js       Hora local del hogar y frases ("son las 9 y cuarto de la mañana").
   ai.js         Charla con Claude para lo que las reglas no entienden, con 4 herramientas.
   voice.js      Puente con el servicio de voz del familiar y el filtro de temas riesgosos (risky).
+  encuentro.js  Encuentro: qué actividad sugerir (pickActivity), cómo decirla y qué pasa si dice sí o no.
+  news.js       Clima (Open-Meteo), geocodificación, RSS de Google Noticias y la preparación diaria (prepareDay).
 voz/            Servicio de voz en Python (Chatterbox): instalar.ps1, servidor.py. Escucha solo en 127.0.0.1:5005.
 public/
   index.html            Inicio + crear hogar.
   casa/                 App de la casa (index.html, casa.js, casa.css).
   familia/              App de la familia (index.html, familia.js, familia.css, sw.js, manifest).
+  orbita/               Panel de Órbita para cargar la cartelera de Encuentro (protegido con ORBITA_KEY).
   shared/base.css       Tema (crema, tinta y ámbar) y el dibujo del parlante.
 test/tata.test.js       Tests de la lógica con reloj simulado.
 ```
@@ -122,7 +132,8 @@ test/tata.test.js       Tests de la lógica con reloj simulado.
 6. **Editar** recordatorios y turnos desde la app (hoy solo se pueden crear, pausar y borrar). El endpoint `PATCH` ya existe.
 7. **Más guías paso a paso**, cargables por la familia.
 8. **Hardware:** Raspberry Pi + micrófono de conferencia + botón SOS físico, corriendo la misma `/casa/` en modo kiosco.
-9. **VoiceStudio como motor de voz (en la rama `dev`).** El código está hecho y testeado, pero falta probarlo con voces reales. Detalles y pasos pendientes en el HANDOFF de esa rama.
+9. **Encuentro y la mañana** (hecho, decisión 10). Falta: cargar la cartelera real de Córdoba en `/orbita/`, probar las noticias con `ANTHROPIC_API_KEY` y mirar con la familia si el resumen de la mañana resulta útil o largo.
+10. **VoiceStudio como motor de voz (en la rama `dev`).** El código está hecho y testeado, pero falta probarlo con voces reales. Detalles y pasos pendientes en el HANDOFF de esa rama.
 
 ## Ideas propuestas (sin hacer todavía)
 
@@ -132,7 +143,7 @@ Ordenadas por impacto para la persona mayor y la familia:
 2. **"Tata, poné la radio".** Radios en vivo por streaming (por ejemplo Cadena 3 o Mitre Córdoba), elegidas por la familia en Ajustes. Es compañía, y es de lo que más usa una persona mayor un parlante inteligente.
 3. **Registro de "no entendí".** En la app de la familia, una lista de las frases que Tata no entendió. Sirve para mejorar las reglas y es la métrica clave del piloto (paso 2).
 4. **Modo noche.** De noche la pantalla se apaga y Tata no habla, salvo SOS y lo que le pregunten. Evita que despierte a la persona con un recordatorio o una luz fuerte.
-5. **Cambiar la zona horaria y los horarios desde Ajustes** (inactividad, resumen, teléfono de emergencia). La API ya lo soporta; falta la pantalla.
+5. **Cambiar la zona horaria desde Ajustes**, por si la tablet tiene mal la hora. La API ya la acepta; falta el campo.
 
 ## Ramas
 
