@@ -363,6 +363,24 @@ async function serve(opts = {}) {
   return { ...app, url, call, close: () => new Promise(r => app.server.close(r)) };
 }
 
+// ---------- Vincular y desvincular la tablet ----------
+test('la tablet se puede desvincular sola, la familia se entera y el código nuevo sirve', async () => {
+  const s = await serve();
+  try {
+    const fam = (await s.call('POST', '/api/households', { memberName: 'Laura', elderName: 'Elsa' })).body.token;
+    const code1 = (await s.call('GET', '/api/familia/me', null, fam)).body.household.device_code;
+    const dev = (await s.call('POST', '/api/casa/pair', { code: code1 })).body.token;
+    assert.equal((await s.call('GET', '/api/casa/state', null, dev)).status, 200);
+
+    assert.equal((await s.call('POST', '/api/casa/unpair', null, dev)).status, 200);
+    assert.equal((await s.call('GET', '/api/casa/state', null, dev)).status, 401);
+    const me = (await s.call('GET', '/api/familia/me', null, fam)).body;
+    assert.equal(me.household.paired, false);
+    assert.ok(me.events.some(e => /desvincul/i.test(e.title)));
+    assert.equal((await s.call('POST', '/api/casa/pair', { code: me.household.device_code })).status, 200);
+  } finally { await s.close(); }
+});
+
 // ---------- Panel de Órbita ----------
 test('panel de Órbita: apagado sin clave y protegido con clave', async () => {
   const off = await serve({ orbitaKey: '' });

@@ -285,7 +285,23 @@
   $('#optRate').value = rate;
   $('#optRate').addEventListener('change', e => { rate = Number(e.target.value); store.set('tata.rate', String(rate)); });
   $('#optTest').addEventListener('click', () => say([{ text: `Hola, ${info?.elder_name || ''}. Así suena mi voz.` }]));
-  $('#gearBtn').addEventListener('click', () => { $('#opts').hidden = false; });
+  $('#gearBtn').addEventListener('click', () => {
+    $('#optWho').textContent = info?.elder_name ? `Esta tablet es la de la casa de ${info.elder_name}.` : '';
+    $('#opts').hidden = false;
+  });
+  // Dos toques para desvincular, para que no pase sin querer.
+  let unpairArmed = null;
+  $('#optUnpair').addEventListener('click', async e => {
+    const b = e.currentTarget;
+    if (!unpairArmed) {
+      b.textContent = 'Tocá de nuevo para confirmar';
+      unpairArmed = setTimeout(() => { unpairArmed = null; b.textContent = 'Desvincular esta tablet'; }, 5000);
+      return;
+    }
+    clearTimeout(unpairArmed); unpairArmed = null; b.textContent = 'Desvincular esta tablet';
+    try { await api('/api/casa/unpair', { method: 'POST' }); } catch {}
+    stopAlways?.(); $('#opts').hidden = true; unpair();
+  });
   $('#optClose').addEventListener('click', () => { $('#opts').hidden = true; });
   $('#opts').addEventListener('click', e => { if (e.target.id === 'opts') $('#opts').hidden = true; });
 

@@ -457,6 +457,13 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
       core.notify(hh, 'info', 'Tata quedó vinculada', `El dispositivo de ${hh.elder_name} ya está conectado.`);
       return [200, { token: t, elder_name: hh.elder_name }];
     }],
+    // La tablet se desvincula sola (desde el engranaje): queda libre para vincularse a otra casa.
+    ['POST', '/api/casa/unpair', (req, url) => {
+      const hh = authDevice(req, url);
+      q.run('UPDATE households SET device_token = NULL, device_code = ? WHERE id = ?', freeCode(), hh.id);
+      core.notify(hh, 'warn', 'Tata se desvinculó desde la casa', `El dispositivo de ${hh.elder_name} dejó de estar conectado. Para volver a vincularlo, usá el código nuevo de Ajustes.`);
+      changed(hh); return [200, { ok: true }];
+    }],
     ['GET', '/api/casa/state', (req, url) => [200, deviceView(authDevice(req, url))]],
     ['GET', '/api/casa/stream', (req, url, res) => {
       const hh = authDevice(req, url);
