@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { join, normalize, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,8 @@ import { startScheduler } from './scheduler.js';
 import { parseHHMM, fmtMin } from './time.js';
 import { createAi } from './ai.js';
 import { createVoice, risky } from './voice.js';
+import { upcoming } from './encuentro.js';
+import { geocode } from './news.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -20,7 +23,8 @@ const bad = msg => { throw new HttpError(400, msg); };
 const str = (v, max = 200) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const bool = v => (v ? 1 : 0);
 
-export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', clock, withPush = true, ai = createAi(), voice = createVoice() } = {}) {
+export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', clock, withPush = true, ai = createAi(), voice = createVoice(),
+  orbitaKey = process.env.ORBITA_KEY || '', fetchImpl = globalThis.fetch } = {}) {
   const db = openDb(dbFile);
   const q = makeQ(db);
   const push = withPush ? createPush(q) : null;
@@ -49,6 +53,12 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
     const m = q.get('SELECT * FROM members WHERE token = ?', bearer(req, url));
     if (!m) throw new HttpError(401, 'No autorizado');
     return { member: m, hh: core.household(m.household_id) };
+  };
+  // Panel de Órbita: una sola clave compartida (ORBITA_KEY). Sin clave, el panel no existe.
+  const authOrbita = (req, url) => {
+    if (!orbitaKey) throw new HttpError(404, 'No existe');
+    const got = Buffer.from(bearer(req, url) || ''), want = Buffer.from(orbitaKey);
+    if (got.length !== want.length || !timingSafeEqual(got, want)) throw new HttpError(401, 'No autorizado');
   };
   const authDevice = (req, url) => {
     const t = bearer(req, url);
@@ -82,7 +92,15 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
         device_phone: hh.device_phone, emergency_phone: hh.emergency_phone,
         inactivity_on: !!hh.inactivity_on, inactivity_at: fmtMin(hh.inactivity_at),
         summary_on: !!hh.summary_on, summary_at: fmtMin(hh.summary_at),
-        online: core.deviceOnline(hh.id), last_seen: hh.last_seen
+        online: core.deviceOnline(hh.id), last_seen: hh.last_seen,
+        city: hh.city, barrio: hh.barrio
+      },
+      interests: q.all('SELECT id, text FROM interests WHERE household_id = ? ORDER BY id', hh.id),
+      encuentro: {
+        upcoming: upcoming(core, hh, 7).map(({ a, date }) => ({ id: a.id, title: a.title, place: a.place, address: a.address, barrio: a.barrio, date, at: fmtMin(a.at), price: a.price, phone: a.phone })),
+        liked: q.all(`SELECT a.title, a.place, a.at, x.date, x.ts FROM activity_answers x JOIN activities a ON a.id = x.activity_id
+          WHERE x.household_id = ? AND x.answer = 'si' AND x.ts > ? ORDER BY x.ts DESC`, hh.id, core.ts() - 30 * 86400000)
+          .map(r => ({ ...r, at: fmtMin(r.at) }))
       },
       now: { date: now.date, time: fmtMin(now.min) },
       sos: core.sos(hh),
@@ -108,6 +126,27 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
     ui: uiState(core, hh)
   });
   const changed = hh => core.send(hh.id, 'all', { type: 'refresh' });
+
+  /** Campos de una actividad de la cartelera. Con `partial`, solo valida los que vienen (para PATCH). */
+  function activityFields(b, partial = false) {
+    const f = {};
+    const has = k => !partial || k in b;
+    for (const [k, max, required] of [['title', 80, 1], ['place', 80, 1], ['address', 120], ['city', 60, 1], ['barrio', 60], ['price', 40], ['phone', 30], ['tags', 120], ['note', 200]]) {
+      if (!has(k)) continue;
+      f[k] = str(b[k], max);
+      if (required && !f[k]) bad('Falta ' + { title: 'qué es', place: 'dónde', city: 'la ciudad' }[k]);
+    }
+    if (has('at')) { f.at = parseHHMM(b.at); if (f.at == null) bad('Hora inválida'); }
+    if (has('days') || has('date')) {
+      const date = b.date ? str(b.date, 10) : null;
+      if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) bad('Fecha inválida');
+      f.date = date;
+      f.days = date ? '' : str(b.days, 7).replace(/[^0-6]/g, '');
+      if (!f.date && !f.days) bad('Falta qué días o qué fecha');
+    }
+    if ('active' in b) f.active = bool(b.active);
+    return f;
+  }
 
   function reminderFields(b) {
     const label = str(b.label, 80); if (!label) bad('Falta qué es');
@@ -182,6 +221,16 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
       if ('emergency_phone' in b) set('emergency_phone', str(b.emergency_phone, 20) || '107');
       if ('device_phone' in b) set('device_phone', str(b.device_phone, 30) || null);
       if ('timezone' in b) { const tz = str(b.timezone, 60); try { new Intl.DateTimeFormat('es', { timeZone: tz }); } catch { bad('Zona horaria inválida'); } set('timezone', tz); }
+      if ('barrio' in b) set('barrio', str(b.barrio, 60));
+      if ('city' in b) {
+        const city = str(b.city, 60);
+        if (city !== hh.city) {
+          const geo = await geocode(city, fetchImpl);
+          q.run('UPDATE households SET city = ?, lat = ?, lon = ? WHERE id = ?', city, geo?.lat ?? null, geo?.lon ?? null, hh.id);
+          // Otra ciudad, otro clima: que el scheduler vuelva a preparar el día.
+          q.run('UPDATE days SET prepared = NULL, news = NULL, weather = NULL WHERE household_id = ? AND date = ?', hh.id, core.now(hh).date);
+        }
+      }
       changed(hh); return [200, { ok: true }];
     }],
     ['POST', '/api/familia/device/unpair', (req, url) => {
@@ -354,6 +403,47 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
     }],
 
     // ----- dispositivo de la casa -----
+    // ----- intereses de ella (para charlar, para las noticias y para elegir actividades) -----
+    ['POST', '/api/familia/interests', async (req, url) => {
+      const { hh } = authMember(req, url);
+      const text = str((await readJson(req)).text, 40);
+      if (!text) bad('Falta el interés');
+      if (q.get('SELECT COUNT(*) AS n FROM interests WHERE household_id = ?', hh.id).n >= 12) bad('Ya hay 12 intereses');
+      const r = q.run('INSERT INTO interests (household_id, text) VALUES (?, ?)', hh.id, text);
+      changed(hh); return [201, { id: Number(r.lastInsertRowid) }];
+    }],
+    ['DELETE', '/api/familia/interests/:id', (req, url, res, p) => {
+      const { hh } = authMember(req, url);
+      if (!q.run('DELETE FROM interests WHERE id = ? AND household_id = ?', Number(p.id), hh.id).changes) throw new HttpError(404, 'No existe');
+      changed(hh); return [200, { ok: true }];
+    }],
+
+    // ----- Órbita: la cartelera de Encuentro -----
+    ['GET', '/api/orbita/activities', (req, url) => {
+      authOrbita(req, url);
+      return [200, { activities: q.all('SELECT * FROM activities ORDER BY active DESC, city, title') }];
+    }],
+    ['POST', '/api/orbita/activities', async (req, url) => {
+      authOrbita(req, url);
+      const f = activityFields(await readJson(req));
+      const r = q.run(`INSERT INTO activities (title, place, address, city, barrio, at, days, date, price, phone, tags, note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, f.title, f.place, f.address, f.city, f.barrio, f.at, f.days, f.date,
+        f.price, f.phone, f.tags, f.note, core.ts());
+      return [201, { id: Number(r.lastInsertRowid) }];
+    }],
+    ['PATCH', '/api/orbita/activities/:id', async (req, url, res, p) => {
+      authOrbita(req, url);
+      if (!q.get('SELECT 1 FROM activities WHERE id = ?', Number(p.id))) throw new HttpError(404, 'No existe');
+      const f = activityFields(await readJson(req), true);
+      for (const [k, v] of Object.entries(f)) q.run(`UPDATE activities SET ${k} = ? WHERE id = ?`, v, Number(p.id));
+      return [200, { ok: true }];
+    }],
+    ['DELETE', '/api/orbita/activities/:id', (req, url, res, p) => {
+      authOrbita(req, url);
+      q.run('DELETE FROM activities WHERE id = ?', Number(p.id));
+      return [200, { ok: true }];
+    }],
+
     ['POST', '/api/casa/pair', async req => {
       const b = await readJson(req);
       const code = str(b.code, 10).replace(/\D/g, '');

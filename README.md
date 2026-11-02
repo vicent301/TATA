@@ -58,6 +58,8 @@ Solo el parlante de Tata en el centro, como un Echo:
 - "Decile a Laura que…": le manda el mensaje.
 - Paso a paso para hacer una transferencia, mandar una foto por WhatsApp o hacer una videollamada.
 - Saludos, y compañía si dice que se siente sola.
+- "¿Qué hay para hacer?": le sugiere una actividad cerca (ver Encuentro, abajo). "¿Dónde es?", "¿a qué hora es?".
+- "Contame una noticia", "¿cómo va a estar el día?": la noticia liviana del día o el clima.
 
 **Sola** (cada 30 segundos, en `server/scheduler.js`):
 - **Recordatorios** por día de la semana o con fecha.
@@ -66,6 +68,21 @@ Solo el parlante de Tata en el centro, como un Echo:
 - **Mañana:** si no hubo actividad, pregunta "¿Cómo amaneciste?" y avisa a la familia si no contesta en 15 minutos (por defecto a las 11:00).
 - **Resumen del día** para la familia (por defecto a las 21:00).
 - **Desconexión:** avisa si la tablet se desconecta más de 10 minutos.
+- **Madrugada:** desde las 05:00 prepara el clima y la noticia del día para el resumen de la mañana.
+
+## Encuentro y la mañana
+
+Tata es parte de **Órbita**, la alianza entre Tata y **Encuentro**: además de la pastilla, le ayuda a no estar sola.
+
+- **La cartelera de Encuentro la arma Órbita** en el panel `/orbita/`: qué, dónde, cuándo (días de la semana o una fecha), precio, teléfono y etiquetas. El panel se protege con la variable `ORBITA_KEY`; si no está, el panel no existe.
+- **La familia carga en Ajustes dónde vive** (ciudad y barrio) **y qué le interesa** ("Talleres", "tango", "recetas"). En la pestaña **Encuentro** ve lo que hay cerca y lo que a ella le interesó.
+- **El resumen de la mañana:** la primera vez que ella le habla a Tata entre las 6 y las 13, Tata le contesta y suma, si hay, la pastilla pendiente, el clima o una noticia liviana, y una actividad de su ciudad ("Hoy a las 17 hay taller de tejido en el centro vecinal. ¿Te interesa?"). Tata nunca arranca a hablar sola para esto, para no asustarla.
+- **Actividades:** primero las de su barrio, después las que coinciden con sus intereses, después la más próxima; solo de hoy o mañana. Si dice que sí, Tata le da los datos y la familia recibe un aviso. Si dice que no, no insiste.
+- **Noticias:** solo de sus intereses y temas livianos, nunca policiales, tragedias, política ni estafas. Salen del RSS de Google Noticias y las elige Claude, así que **necesitan `ANTHROPIC_API_KEY`**; sin ella, Tata solo da el clima. El clima es de [Open-Meteo](https://open-meteo.com), gratis y sin claves. Si algo falla, ese día no hay noticia: nunca se inventa.
+
+```powershell
+$env:ORBITA_KEY="una-clave-larga"; npm start     # y entrá a http://localhost:3000/orbita/
+```
 
 ## Charla con Claude (opcional)
 
@@ -120,7 +137,8 @@ Es un solo proceso Node con una base SQLite en `data/tata.db`. Sirve cualquier h
 | `DB_FILE` | Ruta de la base (por defecto `data/tata.db`) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Claves de push. Si no están, se generan solas y se guardan en la base |
 | `VAPID_SUBJECT` | `mailto:` de contacto para el servicio de push |
-| `ANTHROPIC_API_KEY` | Activa la charla con Claude |
+| `ANTHROPIC_API_KEY` | Activa la charla con Claude y las noticias de la mañana |
+| `ORBITA_KEY` | Clave del panel de Órbita (`/orbita/`). Sin ella, el panel está apagado |
 | `TATA_MODEL` | Modelo de Claude (por defecto `claude-opus-5-5`) |
 | `VOZ_MOTOR` | Motor de voz principal: `voicestudio` (por defecto) o `chatterbox`. El otro queda de respaldo |
 | `VOICESTUDIO_URL` | Dónde está la API de VoiceStudio (por defecto `http://127.0.0.1:3900`) |
@@ -133,8 +151,10 @@ El acceso es con links personales y un código de 6 dígitos para la tablet, sin
 
 ```
 server/   index.js (rutas HTTP), brain.js (qué entiende), scheduler.js (lo automático),
-          ai.js (Claude), voice.js (voz del familiar), core.js, db.js, push.js, time.js
-public/   index.html (inicio), casa/ (app de la casa), familia/ (app de la familia), shared/
+          ai.js (Claude), voice.js (voz del familiar), encuentro.js (qué actividad sugerir),
+          news.js (clima y noticias), core.js, db.js, push.js, time.js
+public/   index.html (inicio), casa/ (app de la casa), familia/ (app de la familia),
+          orbita/ (panel de la cartelera), shared/
 voz/      servicio de voz con Chatterbox (Python), respaldo de VoiceStudio
 test/     tests de la lógica con reloj simulado
 ```
@@ -147,6 +167,8 @@ test/     tests de la lógica con reloj simulado
 | `EADDRINUSE` al arrancar | El puerto está ocupado: arrancá con otro `PORT`. |
 | La casa no escucha | Usá Chrome, dale permiso al micrófono y abrilo en `localhost` o con HTTPS. |
 | Tata no charla de cualquier tema | Falta `ANTHROPIC_API_KEY`. |
+| No sugiere actividades ni dice el clima | La familia no cargó la ciudad en Ajustes, o no hay actividades de esa ciudad para hoy o mañana en `/orbita/`. |
+| `/orbita/` dice que el panel está apagado | Falta `ORBITA_KEY` al arrancar el servidor. |
 | Los mensajes no salen con la voz del familiar | No está abierto VoiceStudio ni prendido el servicio de `voz/`, o el familiar no grabó su voz. Con VoiceStudio abierto, `http://127.0.0.1:3900/health` tiene que responder `{"status":"ok"}`. |
 | VoiceStudio pide más espacio | Su entorno ocupa ~9 GB, más el motor de voz. Liberá lugar (por ejemplo `npm cache clean --force` y `pip cache purge`). |
 | No llegan notificaciones | Hacen falta HTTPS y activar push en Ajustes. En iPhone, la app tiene que estar agregada a inicio (iOS 16.4 o más nuevo). |

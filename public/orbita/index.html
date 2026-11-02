@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Órbita · Encuentro</title>
+<meta name="theme-color" content="#EFE8DC">
+<meta name="robots" content="noindex">
+<link rel="icon" href="/shared/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/shared/base.css">
+<style>
+  /* Panel de Órbita: textos de 18 px como mínimo. */
+  body{font-size:18px}
+  .wrap{max-width:760px;margin:0 auto;padding:24px 16px 64px;display:flex;flex-direction:column;gap:18px}
+  .wrap h1{margin:0;font-size:40px}
+  .wrap h2{margin:8px 0 0;font-size:24px}
+  .form label,.hint,.err,.btn,.btn.small{font-size:18px}
+  .form input,.form textarea{font-size:18px}
+  .days{display:flex;gap:8px;flex-wrap:wrap}
+  .days label{flex-direction:row!important;align-items:center;gap:6px!important;color:var(--ink)!important}
+  .days input{width:22px;height:22px;accent-color:var(--amber-deep)}
+  .list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+  .list li{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+  .list li.off{opacity:.55}
+  .list .tx{flex:1;min-width:220px}
+  .list .tx b{font-size:20px}
+  .list .tx div{color:var(--muted)}
+  .list .acts{display:flex;gap:8px}
+  @media (max-width:520px){.form .two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div>
+    <span class="eyebrow">Órbita</span>
+    <h1 class="display">ENCUENTRO</h1>
+    <p class="hint">La cartelera de actividades que Tata les sugiere a las personas mayores de cada ciudad.</p>
+  </div>
+
+  <form class="card form" id="keyForm" hidden>
+    <label>Clave del panel<input name="key" type="password" autocomplete="current-password" required></label>
+    <p class="err" id="keyErr" hidden></p>
+    <button class="btn primary" type="submit">Entrar</button>
+  </form>
+
+  <section id="panel" hidden>
+    <form class="card form" id="actForm">
+      <h2>Nueva actividad</h2>
+      <label>Qué es<input name="title" required maxlength="80" placeholder="Taller de tejido"></label>
+      <div class="two">
+        <label>Dónde<input name="place" required maxlength="80" placeholder="Centro vecinal Alta Córdoba"></label>
+        <label>Dirección<input name="address" maxlength="120" placeholder="Av. Juan B. Justo 2000"></label>
+      </div>
+      <div class="two">
+        <label>Ciudad<input name="city" required maxlength="60" placeholder="Córdoba"></label>
+        <label>Barrio<input name="barrio" maxlength="60" placeholder="Alta Córdoba"></label>
+      </div>
+      <div class="two">
+        <label>Hora<input name="at" type="time" required></label>
+        <label>Fecha (si es una sola vez)<input name="date" type="date"></label>
+      </div>
+      <div class="days" id="days" aria-label="Días de la semana"></div>
+      <div class="two">
+        <label>Precio<input name="price" maxlength="40" placeholder="Gratis"></label>
+        <label>Teléfono<input name="phone" maxlength="30" inputmode="tel"></label>
+      </div>
+      <label>Etiquetas (separadas por comas)<input name="tags" maxlength="120" placeholder="tejido, manualidades"></label>
+      <label>Nota<textarea name="note" maxlength="200" rows="2"></textarea></label>
+      <p class="err" id="actErr" hidden></p>
+      <div class="row" style="display:flex;gap:12px;align-items:center">
+        <button class="btn primary" type="submit">Guardar</button><span class="hint" id="actSaved"></span>
+      </div>
+    </form>
+
+    <h2>Cargadas</h2>
+    <ul class="list" id="list"></ul>
+  </section>
+</main>
+<script src="/orbita/orbita.js"></script>
+</body>
+</html>

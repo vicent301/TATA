@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS households (
   offline_alerted INTEGER NOT NULL DEFAULT 0,
   convo TEXT NOT NULL DEFAULT '{}',
   sos TEXT,
+  city TEXT NOT NULL DEFAULT '',
+  barrio TEXT NOT NULL DEFAULT '',
+  lat REAL,
+  lon REAL,
   created_at INTEGER NOT NULL
 );
 
@@ -107,6 +111,10 @@ CREATE TABLE IF NOT EXISTS days (
   check_asked INTEGER,
   inact_alerted INTEGER NOT NULL DEFAULT 0,
   summary_sent INTEGER NOT NULL DEFAULT 0,
+  briefed INTEGER,
+  prepared INTEGER,
+  news TEXT,
+  weather TEXT,
   PRIMARY KEY (household_id, date)
 );
 
@@ -152,7 +160,62 @@ CREATE TABLE IF NOT EXISTS audio (
   data BLOB NOT NULL,
   created_at INTEGER NOT NULL
 );
+
+-- Cartelera de Órbita (Encuentro): compartida por todos los hogares.
+CREATE TABLE IF NOT EXISTS activities (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  place TEXT NOT NULL,
+  address TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL,
+  barrio TEXT NOT NULL DEFAULT '',
+  at INTEGER NOT NULL,
+  days TEXT NOT NULL DEFAULT '',
+  date TEXT,
+  price TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  tags TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL
+);
+
+-- Intereses de ella, cargados por la familia ("Talleres", "tango", "recetas").
+CREATE TABLE IF NOT EXISTS interests (
+  id INTEGER PRIMARY KEY,
+  household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+  text TEXT NOT NULL
+);
+
+-- Qué contestó ella a cada actividad sugerida: para no insistir y para la familia.
+CREATE TABLE IF NOT EXISTS activity_answers (
+  household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+  activity_id INTEGER NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  PRIMARY KEY (household_id, activity_id, date)
+);
 `;
+
+// Columnas agregadas después: una base vieja las suma al abrirse (CREATE TABLE IF NOT EXISTS no lo hace).
+const ADDED = [
+  ['households', 'city', "TEXT NOT NULL DEFAULT ''"],
+  ['households', 'barrio', "TEXT NOT NULL DEFAULT ''"],
+  ['households', 'lat', 'REAL'],
+  ['households', 'lon', 'REAL'],
+  ['days', 'briefed', 'INTEGER'],
+  ['days', 'prepared', 'INTEGER'],
+  ['days', 'news', 'TEXT'],
+  ['days', 'weather', 'TEXT']
+];
+
+export function migrate(db) {
+  for (const [table, col, def] of ADDED) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+    if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+  }
+}
 
 export const token = () => randomBytes(24).toString('base64url');
 export const deviceCode = () => String(randomInt(100000, 1000000));
@@ -162,6 +225,7 @@ export function openDb(file) {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
 }
 

@@ -4,6 +4,10 @@ import { openDb, q as makeQ } from '../server/db.js';
 import { createCore } from '../server/core.js';
 import { handle, sos } from '../server/brain.js';
 import { tickHousehold } from '../server/scheduler.js';
+import { DatabaseSync } from 'node:sqlite';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { rmSync } from 'node:fs';
 
 // Hogar de prueba en memoria, con un reloj que se puede mover a mano.
 function setup(start = '2026-10-19T08:55:00-03:00') {
@@ -265,4 +269,316 @@ test('cuando el familiar borra su voz, también se borra su perfil en VoiceStudi
   await v.voice.speak('Paso a las 5', muestra);
   await v.voice.forget(muestra);
   assert.equal(v.profiles.length, 0);
+});
+
+// ---------- Esquema: una base vieja suma lo nuevo ----------
+test('una base vieja suma las columnas nuevas sin perder datos', () => {
+  const file = join(tmpdir(), `tata-mig-${process.pid}-${Date.now()}.db`);
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE households (id INTEGER PRIMARY KEY, elder_name TEXT NOT NULL, timezone TEXT NOT NULL DEFAULT 'America/Argentina/Cordoba', device_code TEXT UNIQUE, device_token TEXT UNIQUE, device_phone TEXT, inactivity_on INTEGER NOT NULL DEFAULT 1, inactivity_at INTEGER NOT NULL DEFAULT 660, summary_on INTEGER NOT NULL DEFAULT 1, summary_at INTEGER NOT NULL DEFAULT 1260, emergency_phone TEXT NOT NULL DEFAULT '107', last_seen INTEGER, offline_alerted INTEGER NOT NULL DEFAULT 0, convo TEXT NOT NULL DEFAULT '{}', sos TEXT, created_at INTEGER NOT NULL);
+    CREATE TABLE days (household_id INTEGER NOT NULL, date TEXT NOT NULL, first_activity INTEGER, check_asked INTEGER, inact_alerted INTEGER NOT NULL DEFAULT 0, summary_sent INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (household_id, date));
+    INSERT INTO households (elder_name, created_at) VALUES ('Elsa', 0);`);
+  old.close();
+  const db = openDb(file);
+  const q = makeQ(db);
+  try {
+    assert.deepEqual({ ...q.get('SELECT elder_name, city, barrio FROM households') }, { elder_name: 'Elsa', city: '', barrio: '' });
+    q.run("INSERT INTO days (household_id, date, briefed, prepared, news, weather) VALUES (1, '2026-11-02', 1, 1, 'x', 'y')");
+    q.run("INSERT INTO activities (title, place, city, at, created_at) VALUES ('Tejido', 'Centro', 'Córdoba', 1020, 0)");
+    q.run("INSERT INTO interests (household_id, text) VALUES (1, 'tango')");
+    q.run("INSERT INTO activity_answers (household_id, activity_id, date, answer, ts) VALUES (1, 1, '2026-11-02', 'si', 0)");
+    openDb(file).close(); // reabrir no rompe: la migración es idempotente
+  } finally { db.close(); rmSync(file, { force: true }); rmSync(file + '-wal', { force: true }); rmSync(file + '-shm', { force: true }); }
+});
+
+// ---------- Encuentro: qué actividad sugerir ----------
+import { pickActivity, upcoming, offerText, detailsText, answer } from '../server/encuentro.js';
+
+function act(t, f = {}) {
+  const a = { title: 'Taller de tejido', place: 'Centro vecinal', address: '', city: 'Córdoba', barrio: '', at: 1020, days: '0123456', date: null, price: '', phone: '', tags: '', ...f };
+  return Number(t.q.run(`INSERT INTO activities (title, place, address, city, barrio, at, days, date, price, phone, tags, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`, a.title, a.place, a.address, a.city, a.barrio, a.at, a.days, a.date, a.price, a.phone, a.tags).lastInsertRowid);
+}
+const live = (t, city = 'Córdoba', barrio = '') => t.q.run('UPDATE households SET city = ?, barrio = ? WHERE id = ?', city, barrio, t.hid);
+
+test('pickActivity: misma ciudad, sin importar tildes ni mayúsculas', () => {
+  const t = setup('2026-10-19T09:00:00-03:00');
+  live(t, 'cordoba ');
+  act(t, { title: 'Tango en Rosario', city: 'Rosario', at: 600 });
+  const id = act(t, { title: 'Tejido' });
+  assert.equal(pickActivity(t.core, t.hh())?.a.id, id);
+});
+
+test('pickActivity: primero su barrio, después sus intereses, después la más próxima', () => {
+  const t = setup('2026-10-19T09:00:00-03:00');
+  live(t, 'Córdoba', 'Alta Córdoba');
+  const A = act(t, { title: 'A', barrio: 'Centro', tags: 'tango,baile', at: 1080 });
+  act(t, { title: 'B', barrio: 'Centro', at: 960 });
+  const C = act(t, { title: 'C', barrio: 'alta cordoba', at: 1140 });
+  assert.equal(pickActivity(t.core, t.hh()).a.id, C);
+  t.q.run('DELETE FROM activities WHERE id = ?', C);
+  assert.equal(pickActivity(t.core, t.hh()).a.title, 'B'); // sin intereses: la más próxima
+  t.q.run("INSERT INTO interests (household_id, text) VALUES (?, 'Tango')", t.hid);
+  assert.equal(pickActivity(t.core, t.hh()).a.id, A);
+});
+
+test('pickActivity: la de hoy que ya pasó no, la de mañana sí', () => {
+  const t = setup('2026-10-19T18:00:00-03:00'); // lunes
+  live(t);
+  act(t, { at: 1020, days: '1' }); // lunes 17:00: ya pasó, y mañana es martes
+  assert.equal(pickActivity(t.core, t.hh()), null);
+  act(t, { title: 'Caminata', at: 600 });
+  assert.deepEqual([pickActivity(t.core, t.hh()).a.title, pickActivity(t.core, t.hh()).date], ['Caminata', '2026-10-20']);
+});
+
+test('pickActivity: respeta el no, y sin ciudad no sugiere nada', () => {
+  const t = setup('2026-10-19T09:00:00-03:00');
+  const id = act(t);
+  assert.equal(pickActivity(t.core, t.hh()), null); // sin ciudad
+  live(t);
+  answer(t.core, t.hh(), id, '2026-10-19', 'no');
+  assert.equal(pickActivity(t.core, t.hh()).date, '2026-10-20'); // hoy no, mañana sí
+});
+
+test('Encuentro: cómo lo dice Tata, y la familia se entera si le interesa', () => {
+  const t = setup('2026-10-19T09:00:00-03:00');
+  live(t);
+  const id = act(t, { place: 'Centro vecinal Alta Córdoba', address: 'Av. Juan B. Justo 2000', price: 'Gratis', phone: '351 555 0000' });
+  const p = pickActivity(t.core, t.hh());
+  assert.equal(offerText(t.hh(), p.a, p.date, '2026-10-19'), 'Hoy a las 17 hay Taller de tejido en Centro vecinal Alta Córdoba. ¿Te interesa?');
+  assert.match(detailsText(p.a, p.date, '2026-10-19'), /Av\. Juan B\. Justo 2000.*hoy a las 17.*Gratis/);
+  answer(t.core, t.hh(), id, '2026-10-19', 'si');
+  assert.equal(t.events().at(-1).title, 'A Elsa le interesó una actividad');
+  assert.ok(t.pushed.some(p => p.title === 'A Elsa le interesó una actividad'));
+  assert.equal(upcoming(t.core, t.hh(), 7).length, 7);
+});
+
+// ---------- Servidor HTTP de prueba ----------
+import { createApp } from '../server/index.js';
+async function serve(opts = {}) {
+  const app = createApp({ dbFile: ':memory:', withPush: false, ai: null, voice: null, ...opts });
+  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${app.server.address().port}`;
+  const call = (method, path, body, token) => fetch(url + path, {
+    method, headers: { ...(body ? { 'content-type': 'application/json' } : {}), ...(token ? { authorization: 'Bearer ' + token } : {}) },
+    body: body ? JSON.stringify(body) : undefined
+  }).then(async r => ({ status: r.status, body: await r.json().catch(() => null) }));
+  return { ...app, url, call, close: () => new Promise(r => app.server.close(r)) };
+}
+
+// ---------- Panel de Órbita ----------
+test('panel de Órbita: apagado sin clave y protegido con clave', async () => {
+  const off = await serve({ orbitaKey: '' });
+  try { assert.equal((await off.call('GET', '/api/orbita/activities', null, 'x')).status, 404); } finally { await off.close(); }
+  const on = await serve({ orbitaKey: 'k' });
+  try {
+    assert.equal((await on.call('GET', '/api/orbita/activities', null, 'x')).status, 401);
+    assert.equal((await on.call('GET', '/api/orbita/activities')).status, 401);
+  } finally { await on.close(); }
+});
+
+test('panel de Órbita: crea, lista, pausa y borra', async () => {
+  const s = await serve({ orbitaKey: 'k' });
+  try {
+    const a = { title: 'Taller de tejido', place: 'Centro vecinal', city: 'Córdoba', barrio: 'Alta Córdoba', at: '17:00', days: '24', tags: 'tejido' };
+    const c = await s.call('POST', '/api/orbita/activities', a, 'k');
+    assert.equal(c.status, 201);
+    const list = (await s.call('GET', '/api/orbita/activities', null, 'k')).body.activities;
+    assert.deepEqual([list.length, list[0].title, list[0].at, list[0].days], [1, 'Taller de tejido', 1020, '24']);
+    assert.equal((await s.call('PATCH', `/api/orbita/activities/${c.body.id}`, { active: false }, 'k')).status, 200);
+    assert.equal(s.q.get('SELECT active FROM activities WHERE id = ?', c.body.id).active, 0);
+    assert.equal((await s.call('DELETE', `/api/orbita/activities/${c.body.id}`, null, 'k')).status, 200);
+    assert.equal((await s.call('GET', '/api/orbita/activities', null, 'k')).body.activities.length, 0);
+    assert.equal((await s.call('POST', '/api/orbita/activities', { ...a, city: '' }, 'k')).status, 400);
+    assert.equal((await s.call('POST', '/api/orbita/activities', { ...a, days: '', date: '' }, 'k')).status, 400);
+    assert.equal((await s.call('POST', '/api/orbita/activities', { ...a, at: '25:00' }, 'k')).status, 400);
+  } finally { await s.close(); }
+});
+
+// ---------- Familia: dónde vive e intereses ----------
+const fakeGeo = async u => {
+  if (String(u).includes('geocoding-api.open-meteo.com')) return new Response(JSON.stringify({ results: [{ latitude: -31.4, longitude: -64.18 }] }));
+  return new Response('', { status: 404 });
+};
+async function family(s) {
+  const r = await s.call('POST', '/api/households', { memberName: 'Laura', elderName: 'Elsa' });
+  return r.body.token;
+}
+
+test('familia: guarda ciudad y barrio, y la ciudad se geolocaliza', async () => {
+  const s = await serve({ fetchImpl: fakeGeo });
+  try {
+    const tk = await family(s);
+    assert.equal((await s.call('PATCH', '/api/familia/household', { city: 'Córdoba', barrio: 'Alta Córdoba' }, tk)).status, 200);
+    const hh = s.q.get('SELECT city, barrio, lat, lon FROM households');
+    assert.deepEqual({ ...hh }, { city: 'Córdoba', barrio: 'Alta Córdoba', lat: -31.4, lon: -64.18 });
+    const me = (await s.call('GET', '/api/familia/me', null, tk)).body;
+    assert.deepEqual([me.household.city, me.household.barrio], ['Córdoba', 'Alta Córdoba']);
+  } finally { await s.close(); }
+});
+
+test('familia: intereses, hasta 12, y solo los propios se pueden borrar', async () => {
+  const s = await serve({ fetchImpl: fakeGeo });
+  try {
+    const tk = await family(s), other = await family(s);
+    for (let i = 0; i < 12; i++) assert.equal((await s.call('POST', '/api/familia/interests', { text: 'tema ' + i }, tk)).status, 201);
+    assert.equal((await s.call('POST', '/api/familia/interests', { text: 'uno más' }, tk)).status, 400);
+    assert.equal((await s.call('POST', '/api/familia/interests', { text: '  ' }, other)).status, 400);
+    const me = (await s.call('GET', '/api/familia/me', null, tk)).body;
+    assert.equal(me.interests.length, 12);
+    assert.equal((await s.call('DELETE', `/api/familia/interests/${me.interests[0].id}`, null, other)).status, 404);
+    assert.equal((await s.call('DELETE', `/api/familia/interests/${me.interests[0].id}`, null, tk)).status, 200);
+    assert.equal((await s.call('GET', '/api/familia/me', null, tk)).body.interests.length, 11);
+  } finally { await s.close(); }
+});
+
+test('familia: ve lo que hay cerca y lo que le interesó', async () => {
+  const s = await serve({ fetchImpl: fakeGeo });
+  try {
+    const tk = await family(s);
+    await s.call('PATCH', '/api/familia/household', { city: 'Córdoba' }, tk);
+    s.q.run("INSERT INTO activities (title, place, city, at, days, created_at) VALUES ('Tejido', 'Centro', 'Córdoba', 1439, '0123456', 0)");
+    const me = (await s.call('GET', '/api/familia/me', null, tk)).body;
+    assert.equal(me.encuentro.upcoming[0].title, 'Tejido');
+    assert.deepEqual(me.encuentro.liked, []);
+  } finally { await s.close(); }
+});
+
+// ---------- Noticias y clima ----------
+import { weatherLine, parseRss, prepareDay } from '../server/news.js';
+
+test('weatherLine: soleado, redondea, y la lluvia se dice', () => {
+  assert.equal(weatherLine({ code: 0, max: 24.4, min: 12 }), 'Hoy va a estar soleado, con una máxima de 24 grados.');
+  assert.match(weatherLine({ code: 61, max: 18.6, min: 10 }), /lluvia.*19 grados/);
+});
+
+test('parseRss: limpia CDATA, entidades y la fuente del título', () => {
+  const xml = `<rss><channel><item><title><![CDATA[Talleres gan&oacute; &quot;el clásico&quot; - La Voz]]></title><source url="x">La Voz</source></item>
+    <item><title>Receta de &amp;alfajores - Clarín</title><source url="y">Clarín</source></item></channel></rss>`;
+  assert.deepEqual(parseRss(xml), [{ title: 'Talleres ganó "el clásico"', source: 'La Voz' }, { title: 'Receta de &alfajores', source: 'Clarín' }]);
+});
+
+test('pickNews: una frase válida, o null si no hay, si no es JSON o si es muy larga', async () => {
+  const long = Array(30).fill('palabra').join(' ');
+  const { ai, calls } = fakeClaude([text('{"frase":"Talleres ganó el clásico, Elsa."}'), text('{"frase":null}'), text('no sé'), text(JSON.stringify({ frase: long }))]);
+  const h = [{ title: 'Talleres ganó el clásico', source: 'La Voz' }];
+  assert.equal(await ai.pickNews(['Talleres'], h), 'Talleres ganó el clásico, Elsa.');
+  assert.equal(await ai.pickNews(['Talleres'], h), null);
+  assert.equal(await ai.pickNews(['Talleres'], h), null);
+  assert.equal(await ai.pickNews(['Talleres'], h), null);
+  assert.equal(calls[0].tools, undefined);
+  assert.equal(calls[0].output_config.format.type, 'json_schema');
+  assert.match(calls[0].messages[0].content, /Talleres ganó el clásico/);
+});
+
+const fakeWeb = (u) => {
+  u = String(u);
+  if (u.includes('api.open-meteo.com')) return new Response(JSON.stringify({ daily: { weathercode: [0], temperature_2m_max: [24.4], temperature_2m_min: [12] } }));
+  if (u.includes('news.google.com')) return new Response('<rss><item><title>Talleres ganó el clásico - La Voz</title><source url="x">La Voz</source></item></rss>');
+  return new Response('', { status: 404 });
+};
+
+test('prepareDay: guarda clima y noticia; sin Claude, solo el clima', async () => {
+  const t = setup('2026-10-19T05:10:00-03:00');
+  t.q.run("UPDATE households SET city = 'Córdoba', lat = -31.4, lon = -64.18 WHERE id = ?", t.hid);
+  t.q.run("INSERT INTO interests (household_id, text) VALUES (?, 'Talleres')", t.hid);
+  t.core.ai = fakeClaude([text('{"frase":"Talleres ganó el clásico, Elsa."}')]).ai;
+  await prepareDay(t.core, t.hh(), { fetchImpl: async u => fakeWeb(u) });
+  let d = t.q.get("SELECT * FROM days WHERE household_id = ? AND date = '2026-10-19'", t.hid);
+  assert.deepEqual([d.news, d.weather, d.prepared], ['Talleres ganó el clásico, Elsa.', 'Hoy va a estar soleado, con una máxima de 24 grados.', 1]);
+
+  t.q.run('DELETE FROM days');
+  t.core.ai = null;
+  await prepareDay(t.core, t.hh(), { fetchImpl: async u => fakeWeb(u) });
+  d = t.q.get("SELECT * FROM days WHERE household_id = ? AND date = '2026-10-19'", t.hid);
+  assert.deepEqual([d.news, d.weather, d.prepared], ['', 'Hoy va a estar soleado, con una máxima de 24 grados.', 1]);
+
+  t.q.run('DELETE FROM days');
+  await prepareDay(t.core, t.hh(), { fetchImpl: async () => { throw new Error('sin red'); } });
+  d = t.q.get("SELECT * FROM days WHERE household_id = ? AND date = '2026-10-19'", t.hid);
+  assert.deepEqual([d.news, d.weather, d.prepared], ['', '', 1]);
+});
+
+// ---------- La mañana: el resumen va después de que ella habla ----------
+function morningSetup(at = '2026-10-19T09:00:00-03:00') {
+  const t = setup(at);
+  live(t);
+  act(t, { title: 'Tejido', place: 'Centro vecinal', address: 'Av. Siempreviva 742' });
+  t.q.run("INSERT INTO reminders (household_id, label, say, at, is_med) VALUES (?, 'Pastilla de la presión', 'la pastilla de la presión', 510, 1)", t.hid);
+  t.core.day(t.hh(), '2026-10-19');
+  t.q.run("UPDATE days SET weather = 'Hoy va a estar soleado, con una máxima de 24 grados.', news = '', prepared = 1 WHERE household_id = ?", t.hid);
+  return t;
+}
+const briefed = t => t.q.get("SELECT briefed FROM days WHERE household_id = ? AND date = '2026-10-19'", t.hid).briefed;
+
+test('mañana: después de la primera respuesta suma pastilla, clima y actividad, una sola vez', async () => {
+  const t = morningSetup();
+  assert.match(await t.hear('qué hora es'),
+    /^Son las .* Buen día, Elsa\. Te toca la pastilla de la presión\. Hoy va a estar soleado.* Hoy a las 17 hay Tejido en Centro vecinal\. ¿Te interesa\?$/);
+  assert.ok(briefed(t));
+  await t.hear('no');
+  assert.doesNotMatch(await t.hear('qué hora es'), /Buen día/);
+});
+
+test('mañana: fuera de la ventana de 6 a 13 no hay resumen', async () => {
+  const t = morningSetup('2026-10-19T14:00:00-03:00');
+  assert.doesNotMatch(await t.hear('qué hora es'), /Te toca|Tejido/);
+  assert.equal(briefed(t), null);
+});
+
+test('mañana: si lo primero es un pedido de ayuda, no hay resumen y el SOS sale igual', async () => {
+  const t = morningSetup();
+  const r = await t.hear('me caí, ayuda');
+  assert.match(r, /Ya le avisé a tu familia/);
+  assert.doesNotMatch(r, /Tejido|Buen día/);
+  assert.equal(briefed(t), null);
+});
+
+test('actividad: con sí, Tata da los datos y la familia se entera', async () => {
+  const t = morningSetup();
+  await t.hear('qué hora es');
+  assert.match(await t.hear('sí'), /Av\. Siempreviva 742/);
+  assert.equal(t.events().at(-1).title, 'A Elsa le interesó una actividad');
+  assert.match(await t.hear('dónde es'), /Av\. Siempreviva 742/);
+});
+
+test('actividad: con no, no se la vuelve a ofrecer para ese día', async () => {
+  const t = morningSetup();
+  await t.hear('qué hora es');
+  await t.hear('no');
+  assert.match(await t.hear('qué hay para hacer'), /^Mañana a las 17 hay Tejido/);
+});
+
+test('noticias a pedido: la del día, o el clima, o que no hay', async () => {
+  const t = morningSetup('2026-10-19T14:00:00-03:00');
+  assert.equal(await t.hear('contame una noticia'), 'Hoy va a estar soleado, con una máxima de 24 grados.');
+  t.q.run("UPDATE days SET news = 'Talleres ganó el clásico, Elsa.'");
+  assert.equal(await t.hear('contame una noticia'), 'Talleres ganó el clásico, Elsa.');
+  t.q.run("UPDATE days SET news = '', weather = ''");
+  assert.equal(await t.hear('qué hay de nuevo'), 'Hoy no tengo novedades para contarte.');
+});
+
+test('Claude recibe los intereses, las actividades cerca y la novedad del día', async () => {
+  const t = morningSetup('2026-10-19T14:00:00-03:00');
+  t.q.run("INSERT INTO interests (household_id, text) VALUES (?, 'Tango')", t.hid);
+  t.q.run("UPDATE days SET news = 'Talleres ganó el clásico, Elsa.'");
+  const { ai, calls } = fakeClaude([text('Qué lindo, Elsa.')]);
+  t.core.ai = ai;
+  await t.hear('estuve pensando en mi juventud cuando bailaba en el club');
+  const ctx = calls[0].messages.at(-1).content;
+  assert.match(ctx, /\[Contexto\] Le interesa: Tango\./);
+  assert.match(ctx, /\[Contexto\] Actividades cerca: hoy 17:00 Tejido en Centro vecinal/);
+  assert.match(ctx, /\[Contexto\] Novedad de hoy: Talleres ganó el clásico/);
+  assert.match(calls[0].system, /nunca inventes otras/);
+});
+
+test('con Claude, una frase larga que nombra "actividades" o "el clima" sigue siendo charla', async () => {
+  const t = morningSetup('2026-10-19T14:00:00-03:00');
+  const { ai, calls } = fakeClaude([text('Te entiendo, Elsa.'), text('Sí, está pesado.')]);
+  t.core.ai = ai;
+  assert.equal(await t.hear('hoy la verdad que no tengo ganas de hacer ninguna de esas actividades'), 'Te entiendo, Elsa.');
+  assert.equal(await t.hear('me tiene cansada el clima de estos días tan húmedos'), 'Sí, está pesado.');
+  assert.equal(calls.length, 2);
+  assert.match(await t.hear('qué hay para hacer'), /Tejido/); // las frases cortas siguen yendo a la regla
+  assert.match(await t.hear('cómo va a estar el día'), /soleado/);
 });

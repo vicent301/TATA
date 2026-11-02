@@ -3,6 +3,7 @@
 // queda guardado en el hogar para que sobreviva a recargas del dispositivo.
 
 import { spokenTime, spokenDate, relativeDay, fmtMin, addDays } from './time.js';
+import { pickActivity, offerText, detailsText, answer } from './encuentro.js';
 
 export const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
   .replace(/[¿?¡!.,;:"“”()]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -61,7 +62,38 @@ function pendingMed(core, hh) {
   return meds.find(r => r.fired_at) || meds[0] || null;
 }
 
+/** Lo que ella dijo -> lo que responde Tata. La primera vez en la mañana, suma el resumen del día. */
 export async function handle(core, hh, raw) {
+  const out = await respond(core, hh, raw);
+  morning(core, hh, out.replies);
+  return out;
+}
+
+// Resumen de la mañana: la primera vez que ella habla entre las 6 y las 13, después de contestarle.
+// Nunca arranca solo (para no asustarla) y no interrumpe un pedido de ayuda ni una pregunta pendiente.
+function morning(core, hh, replies) {
+  const now = core.now(hh);
+  if (!replies.length || now.min < 360 || now.min >= 780 || core.sos(hh)) return;
+  const c = core.convo(hh);
+  if (c.confirm || c.guide || c.awaitWho) return;
+  const day = core.day(hh, now.date);
+  if (day.briefed) return;
+  core.q.run('UPDATE days SET briefed = ? WHERE household_id = ? AND date = ?', core.ts(), hh.id, now.date);
+  const parts = [];
+  const r = pendingMed(core, hh);
+  if (r && r.at <= now.min) parts.push(`Te toca ${r.say}.`);
+  if (day.news || day.weather) parts.push(day.news || day.weather);
+  const p = pickActivity(core, hh);
+  if (p) {
+    parts.push(offerText(hh, p.a, p.date, now.date));
+    core.setConvo(hh, { ...c, confirm: { kind: 'activity', id: p.a.id, date: p.date }, lastActivity: { id: p.a.id, date: p.date } });
+  }
+  if (!parts.length) return;
+  if (!/^¡?Buen día/.test(replies[0].text)) parts.unshift(`Buen día, ${hh.elder_name}.`);
+  replies.push({ text: parts.join(' ') });
+}
+
+async function respond(core, hh, raw) {
   const replies = [];
   const say = (text, extra = {}) => replies.push({ text, ...extra });
   const t = norm(raw).replace(/^(oye |che )?tata /, '');
@@ -80,6 +112,7 @@ export async function handle(core, hh, raw) {
     const c = convo.confirm;
     set({ ...convo, confirm: undefined });
     if (yes) return (await confirmYes(core, hh, c, say), { replies });
+    if (c.kind === 'activity') answer(core, hh, c.id, c.date, 'no');
     if (c.kind === 'emergency') say('Bueno. Quedate sentada tranquila, que tu familia ya sabe.');
     else if (c.kind === 'pill') say('Bueno, tomala cuando puedas y avisame.');
     else say('Bueno, no hay problema.');
@@ -172,6 +205,25 @@ export async function handle(core, hh, raw) {
   if (brief && /(estoy bien|todo bien|\bbien\b|recien me levanto|amaneci bien)/.test(t)) { say(`Me alegro mucho, ${name}. Cualquier cosa, acá estoy.`); return { replies }; }
   if (brief && /gracias/.test(t)) { say(`De nada, ${name}. Para eso estoy.`); return { replies }; }
 
+  // Encuentro y novedades del día. Con Claude, solo para pedidos cortos: lo largo es charla.
+  const ask = !core.ai || t.split(' ').length <= 7;
+  if (ask && /(que hay para hacer|alguna actividad|que puedo hacer hoy|actividades)/.test(t)) {
+    const p = pickActivity(core, hh);
+    if (!p) { say('Hoy no tengo actividades cerca para sugerirte.'); return { replies }; }
+    set({ ...convo, confirm: { kind: 'activity', id: p.a.id, date: p.date }, lastActivity: { id: p.a.id, date: p.date } });
+    say(offerText(hh, p.a, p.date, now.date));
+    return { replies };
+  }
+  if (ask && convo.lastActivity && /(donde es|a que hora es|cuanto sale|cuanto cuesta)/.test(t)) {
+    const a = core.q.get('SELECT * FROM activities WHERE id = ?', convo.lastActivity.id);
+    if (a) { say(detailsText(a, convo.lastActivity.date, now.date)); return { replies }; }
+  }
+  if (ask && /(contame una noticia|que hay de nuevo|novedades|como va a estar el dia|como esta el dia|el clima)/.test(t)) {
+    const day = core.day(hh, now.date);
+    say(day.news || day.weather || 'Hoy no tengo novedades para contarte.');
+    return { replies };
+  }
+
   // Nada de lo anterior: si hay Claude, que charle él.
   if (core.ai) {
     const ai = await core.ai.reply(core, hh, String(raw).trim());
@@ -184,6 +236,14 @@ export async function handle(core, hh, raw) {
 async function confirmYes(core, hh, c, say) {
   const replies = [];
   if (c.kind === 'pill') return pillDone(core, hh, say);
+  if (c.kind === 'activity') {
+    const a = core.q.get('SELECT * FROM activities WHERE id = ?', c.id);
+    if (a) {
+      answer(core, hh, a.id, c.date, 'si');
+      core.setConvo(hh, { ...core.convo(hh), lastActivity: { id: a.id, date: c.date } });
+      say(`¡Qué lindo! ${detailsText(a, c.date, core.now(hh).date)} Le aviso a tu familia.`);
+    }
+  }
   if (c.kind === 'call') {
     const ct = core.q.get('SELECT * FROM contacts WHERE id = ? AND household_id = ?', c.id, hh.id);
     if (ct) return callContact(core, hh, ct, say);

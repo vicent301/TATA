@@ -3,6 +3,7 @@
 // noche y el aviso si el dispositivo se desconecta. Corre cada 30 segundos.
 
 import { spokenTime, fmtMin, addDays, localNow } from './time.js';
+import { prepareDay } from './news.js';
 
 const MIN = 60_000;
 export const RULES = {
@@ -11,7 +12,8 @@ export const RULES = {
   pillEscalate: 60 * MIN,// la familia recibe aviso si no confirmó
   inactWait: 15 * MIN,   // tras preguntar "¿cómo amaneciste?", espera esto antes de avisar
   offlineAfter: 10 * MIN,
-  eveAt: 20 * 60         // recordatorio de turnos: 20:00 del día anterior
+  eveAt: 20 * 60,        // recordatorio de turnos: 20:00 del día anterior
+  prepareAt: 5 * 60      // clima y noticia del día: desde las 05:00
 };
 
 export function tickHousehold(core, hh) {
@@ -102,10 +104,17 @@ export function tickHousehold(core, hh) {
   }
 }
 
-export function startScheduler(core, everyMs = 30_000) {
+export function startScheduler(core, everyMs = 30_000, { fetchImpl = globalThis.fetch } = {}) {
+  const preparing = new Set(); // hogares con clima y noticias en camino
   const run = () => {
     for (const { id } of core.q.all('SELECT id FROM households')) {
       try { tickHousehold(core, core.household(id)); } catch (e) { console.error('scheduler', id, e); }
+      // Desde las 5 de la mañana, una vez por día: el clima y la noticia para el resumen de la mañana.
+      const hh = core.household(id);
+      if (!preparing.has(id) && core.now(hh).min >= RULES.prepareAt && !core.day(hh).prepared) {
+        preparing.add(id);
+        prepareDay(core, hh, { fetchImpl }).catch(e => console.error('preparar día', id, e)).finally(() => preparing.delete(id));
+      }
     }
     core.keepalive();
   };

@@ -6,6 +6,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { spokenDate, spokenTime, fmtMin, parseHHMM, addDays, relativeDay } from './time.js';
 import { findContact, sos } from './brain.js';
+import { upcoming } from './encuentro.js';
 
 const MODEL = process.env.TATA_MODEL || 'claude-opus-5-5';
 const SESSION_IDLE_MS = 30 * 60_000;   // después de media hora sin charlar, arranca una charla nueva
@@ -30,6 +31,7 @@ Cuidados:
 - Nunca le pidas claves, contraseñas, códigos, números de tarjeta ni datos del banco, y recordale que nadie de confianza se los pide.
 - Si te cuenta que alguien la llamó o le escribió pidiendo plata, un código o datos (aunque diga ser un familiar), decile que no dé nada, que corte, y ofrecé avisarle a su familia.
 - No digas que hiciste algo si no usaste la herramienta. Si algo no lo podés hacer, decilo con sencillez.
+- Solo mencioná actividades y noticias que estén en el [Contexto]; nunca inventes otras.
 - Las líneas que empiezan con [Contexto] son datos para vos; no las leas en voz alta.`;
 
 const tool = (name, description, properties) => ({
@@ -81,12 +83,18 @@ export function createAi({ apiKey = process.env.ANTHROPIC_API_KEY, client } = {}
     const apts = core.q.all('SELECT date, at, what FROM appointments WHERE household_id = ? AND date >= ? ORDER BY date, at LIMIT 3', hh.id, now.date);
     const contacts = core.q.all('SELECT name, relation, member_id FROM contacts WHERE household_id = ? ORDER BY id', hh.id);
     const mem = core.q.all('SELECT text FROM memories WHERE household_id = ? ORDER BY id DESC LIMIT 30', hh.id);
+    const likes = core.q.all('SELECT text FROM interests WHERE household_id = ? ORDER BY id', hh.id).map(i => i.text);
+    const near = upcoming(core, hh, 2).slice(0, 4);
+    const day = core.day(hh, now.date);
     return [
       `[Contexto] Hoy es ${spokenDate(now.date)}, ${spokenTime(now.min).replace(/^Son las /, 'las ')}.`,
       meds.length ? `[Contexto] Recordatorios de hoy: ${meds.map(r => `${fmtMin(r.at)} ${r.label}${r.done_at ? ' (hecho)' : ''}`).join('; ')}.` : '',
       apts.length ? `[Contexto] Próximos turnos: ${apts.map(a => `${relativeDay(a.date, now.date)} ${fmtMin(a.at)} con ${a.what}`).join('; ')}.` : '',
       contacts.length ? `[Contexto] Contactos: ${contacts.map(c => `${c.name}${c.relation ? ` (${c.relation})` : ''}`).join(', ')}.` : '',
-      mem.length ? `[Contexto] Lo que sabés de ${hh.elder_name}: ${mem.reverse().map(m => m.text).join(' ')}` : ''
+      mem.length ? `[Contexto] Lo que sabés de ${hh.elder_name}: ${mem.reverse().map(m => m.text).join(' ')}` : '',
+      likes.length ? `[Contexto] Le interesa: ${likes.join(', ')}.` : '',
+      near.length ? `[Contexto] Actividades cerca: ${near.map(({ a, date }) => `${relativeDay(date, now.date)} ${fmtMin(a.at)} ${a.title} en ${a.place}`).join('; ')}.` : '',
+      day.news ? `[Contexto] Novedad de hoy: ${day.news}` : ''
     ].filter(Boolean).join('\n');
   }
 
@@ -174,5 +182,42 @@ export function createAi({ apiKey = process.env.ANTHROPIC_API_KEY, client } = {}
     }
   }
 
-  return { reply, model: MODEL };
+  /**
+   * Elige como mucho una noticia liviana que coincida con sus intereses y la cuenta en una frase.
+   * Devuelve null si no hay ninguna adecuada o si la respuesta no es válida: nunca se inventa una noticia.
+   */
+  async function pickNews(interests, headlines) {
+    const list = headlines.map((h, i) => `${i + 1}. ${h.title}${h.source ? ` (${h.source})` : ''}`).join('\n');
+    try {
+      const res = await anthropic.beta.messages.create({
+        model: MODEL, max_tokens: 2000,
+        betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: NEWS_SCHEMA } },
+        system: NEWS_SYSTEM,
+        messages: [{ role: 'user', content: `Le interesa: ${interests.join(', ')}.\n\nTitulares de hoy:\n${list}` }]
+      });
+      if (res.stop_reason === 'refusal') return null;
+      const raw = res.content.find(b => b.type === 'text')?.text || '';
+      const frase = JSON.parse(raw)?.frase;
+      if (typeof frase !== 'string' || !frase.trim() || frase.trim().split(/\s+/).length > 25) return null;
+      return frase.trim();
+    } catch (e) {
+      if (!(e instanceof SyntaxError)) console.error('tata noticias', e?.status || '', e?.message || e);
+      return null;
+    }
+  }
+
+  return { reply, pickNews, model: MODEL };
 }
+
+const NEWS_SCHEMA = {
+  type: 'object',
+  properties: { frase: { anyOf: [{ type: 'string' }, { type: 'null' }] } },
+  required: ['frase'], additionalProperties: false
+};
+const NEWS_SYSTEM = `Elegís noticias para Tata, una compañera de voz de una persona mayor que vive sola en Argentina. Lo que elijas se lee en voz alta a la mañana.
+
+- Elegí como mucho una noticia que coincida con alguno de sus intereses y sea liviana o positiva.
+- Descartá policiales, accidentes, muertes, enfermedades, política, economía alarmante, estafas, guerras y catástrofes. Ante la duda, descartá.
+- Contala en una frase de hasta 25 palabras, en castellano rioplatense con voseo, sin inventar nada que no diga el titular.
+- Si ninguna sirve, respondé con frase en null.`;
