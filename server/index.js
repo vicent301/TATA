@@ -11,7 +11,7 @@ import { startScheduler } from './scheduler.js';
 import { parseHHMM, fmtMin } from './time.js';
 import { createAi } from './ai.js';
 import { createVoice, risky } from './voice.js';
-import { upcoming } from './encuentro.js';
+import { upcoming, seedActivities, ensureActivities } from './encuentro.js';
 import { geocode } from './news.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -229,6 +229,7 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
           q.run('UPDATE households SET city = ?, lat = ?, lon = ? WHERE id = ?', city, geo?.lat ?? null, geo?.lon ?? null, hh.id);
           // Otra ciudad, otro clima: que el scheduler vuelva a preparar el día.
           q.run('UPDATE days SET prepared = NULL, news = NULL, weather = NULL WHERE household_id = ? AND date = ?', hh.id, core.now(hh).date);
+          ensureActivities(core, core.household(hh.id));
         }
       }
       changed(hh); return [200, { ok: true }];
@@ -536,6 +537,7 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const { server, core } = createApp();
+  seedActivities(core);
   const port = Number(process.env.PORT) || 3000;
   server.listen(port, () => console.log(`Tata escuchando en http://localhost:${port}`));
   startScheduler(core);
