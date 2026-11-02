@@ -236,3 +236,65 @@ test('una base vieja suma las columnas nuevas sin perder datos', () => {
     openDb(file).close(); // reabrir no rompe: la migración es idempotente
   } finally { db.close(); rmSync(file, { force: true }); rmSync(file + '-wal', { force: true }); rmSync(file + '-shm', { force: true }); }
 });
+
+// ---------- Encuentro: qué actividad sugerir ----------
+import { pickActivity, upcoming, offerText, detailsText, answer } from '../server/encuentro.js';
+
+function act(t, f = {}) {
+  const a = { title: 'Taller de tejido', place: 'Centro vecinal', address: '', city: 'Córdoba', barrio: '', at: 1020, days: '0123456', date: null, price: '', phone: '', tags: '', ...f };
+  return Number(t.q.run(`INSERT INTO activities (title, place, address, city, barrio, at, days, date, price, phone, tags, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`, a.title, a.place, a.address, a.city, a.barrio, a.at, a.days, a.date, a.price, a.phone, a.tags).lastInsertRowid);
+}
+const live = (t, city = 'Córdoba', barrio = '') => t.q.run('UPDATE households SET city = ?, barrio = ? WHERE id = ?', city, barrio, t.hid);
+
+test('pickActivity: misma ciudad, sin importar tildes ni mayúsculas', () => {
+  const t = setup('2026-10-19T09:00:00-03:00');
+  live(t, 'cordoba ');
+  act(t, { title: 'Tango en Rosario', city: 'Rosario', at: 600 });
+  const id = act(t, { title: 'Tejido' });
+  assert.equal(pickActivity(t.core, t.hh())?.a.id, id);
+});
+
+test('pickActivity: primero su barrio, después sus intereses, después la más próxima', () => {
+  const t = setup('2026-10-19T09:00:00-03:00');
+  live(t, 'Córdoba', 'Alta Córdoba');
+  const A = act(t, { title: 'A', barrio: 'Centro', tags: 'tango,baile', at: 1080 });
+  act(t, { title: 'B', barrio: 'Centro', at: 960 });
+  const C = act(t, { title: 'C', barrio: 'alta cordoba', at: 1140 });
+  assert.equal(pickActivity(t.core, t.hh()).a.id, C);
+  t.q.run('DELETE FROM activities WHERE id = ?', C);
+  assert.equal(pickActivity(t.core, t.hh()).a.title, 'B'); // sin intereses: la más próxima
+  t.q.run("INSERT INTO interests (household_id, text) VALUES (?, 'Tango')", t.hid);
+  assert.equal(pickActivity(t.core, t.hh()).a.id, A);
+});
+
+test('pickActivity: la de hoy que ya pasó no, la de mañana sí', () => {
+  const t = setup('2026-10-19T18:00:00-03:00'); // lunes
+  live(t);
+  act(t, { at: 1020, days: '1' }); // lunes 17:00: ya pasó, y mañana es martes
+  assert.equal(pickActivity(t.core, t.hh()), null);
+  act(t, { title: 'Caminata', at: 600 });
+  assert.deepEqual([pickActivity(t.core, t.hh()).a.title, pickActivity(t.core, t.hh()).date], ['Caminata', '2026-10-20']);
+});
+
+test('pickActivity: respeta el no, y sin ciudad no sugiere nada', () => {
+  const t = setup('2026-10-19T09:00:00-03:00');
+  const id = act(t);
+  assert.equal(pickActivity(t.core, t.hh()), null); // sin ciudad
+  live(t);
+  answer(t.core, t.hh(), id, '2026-10-19', 'no');
+  assert.equal(pickActivity(t.core, t.hh()).date, '2026-10-20'); // hoy no, mañana sí
+});
+
+test('Encuentro: cómo lo dice Tata, y la familia se entera si le interesa', () => {
+  const t = setup('2026-10-19T09:00:00-03:00');
+  live(t);
+  const id = act(t, { place: 'Centro vecinal Alta Córdoba', address: 'Av. Juan B. Justo 2000', price: 'Gratis', phone: '351 555 0000' });
+  const p = pickActivity(t.core, t.hh());
+  assert.equal(offerText(t.hh(), p.a, p.date, '2026-10-19'), 'Hoy a las 17 hay Taller de tejido en Centro vecinal Alta Córdoba. ¿Te interesa?');
+  assert.match(detailsText(p.a, p.date, '2026-10-19'), /Av\. Juan B\. Justo 2000.*hoy a las 17.*Gratis/);
+  answer(t.core, t.hh(), id, '2026-10-19', 'si');
+  assert.equal(t.events().at(-1).title, 'A Elsa le interesó una actividad');
+  assert.ok(t.pushed.some(p => p.title === 'A Elsa le interesó una actividad'));
+  assert.equal(upcoming(t.core, t.hh(), 7).length, 7);
+});
