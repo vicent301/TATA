@@ -18,7 +18,8 @@ Este MVP lleva eso a dos apps reales conectadas a un servidor:
 
 - **Servidor**: Node.js ≥ 22.13, sin framework (`node:http`).
   - Base: **SQLite** con el módulo nativo `node:sqlite`.
-  - Única dependencia: `web-push`.
+  - Dependencias: `web-push` y `@anthropic-ai/sdk` (este último solo se usa si hay `ANTHROPIC_API_KEY`).
+- **Voz del familiar**: local y opcional. VoiceStudio (app aparte, API en :3900) como principal y Chatterbox Multilingual (servicio en Python, `voz/`) de respaldo.
 - **Tiempo real**: Server-Sent Events (`/api/casa/stream` y `/api/familia/stream`).
 - **Frontend**: HTML, CSS y JS sin build (vanilla), servido como estático desde `public/`.
 - **Voz**:
@@ -38,14 +39,15 @@ Este MVP lleva eso a dos apps reales conectadas a un servidor:
 6. **Primero se le pregunta a ella.** Si a la mañana no hubo actividad, Tata pregunta "¿Cómo amaneciste?" y espera 15 minutos antes de avisar a la familia. Si después habla, la familia recibe "ya habló con Tata". La ventana de chequeo es de 3 horas desde la hora configurada.
 7. **Pastillas con seguimiento.** Tata recuerda a la hora configurada. Si no hay confirmación, pregunta de nuevo a los 30 minutos y avisa a la familia a la hora. Un recordatorio con más de 60 minutos de atraso, por ejemplo porque el servidor estuvo caído, no se dice.
 8. **Acceso sin contraseñas.** Cada familiar entra con un link personal (`/familia/#t=TOKEN`) que queda en `localStorage`. La casa se vincula con un código de 6 dígitos que se renueva cada vez que se usa. Alcanza para un piloto, pero no para producción (ver próximos pasos).
-9. **Todo en la zona horaria del hogar** (`server/time.js`), no en la del servidor.
+9. **Todo en la zona horaria del hogar** (`server/time.js`), no en la del servidor. No se le pregunta a nadie: al crear el hogar se toma la del navegador de quien lo crea, y al vincular la tablet se reemplaza por la de la tablet (`POST /api/casa/pair`), porque es la que está en la casa. Si no llega una válida, queda `America/Argentina/Cordoba`. Hoy no se puede cambiar desde la app, aunque el `PATCH /api/familia/household` la acepta.
 
 ## Estado actual
 
 **Funciona y está probado:**
 
 - Crear un hogar, invitar familiares (link + WhatsApp), cargar contactos (vecina, amigos).
-- Vincular la casa con un código, con una pantalla grande con reloj, carita de Tata, botones **Hablar** y **SOS**, opciones rápidas y la lista de hoy.
+- Vincular la casa con un código de 6 dígitos. La zona horaria se toma sola, sin preguntar.
+- Pantalla de la casa: solo el parlante de Tata en el centro. Un toque para hablar, mantener apretado 2 s para SOS, y lo que dice en letras grandes.
 - Escuchar:
   - Tocar para hablar.
   - Modo "Escuchar siempre" con la palabra "Tata".
@@ -92,6 +94,9 @@ server/
   db.js         Esquema SQLite completo.
   push.js       Web Push / VAPID.
   time.js       Hora local del hogar y frases ("son las 9 y cuarto de la mañana").
+  ai.js         Charla con Claude para lo que las reglas no entienden, con 4 herramientas.
+  voice.js      Puente con el servicio de voz del familiar y el filtro de temas riesgosos (risky).
+voz/            Servicio de voz en Python (Chatterbox): instalar.ps1, servidor.py. Escucha solo en 127.0.0.1:5005.
 public/
   index.html            Inicio + crear hogar.
   casa/                 App de la casa (index.html, casa.js, casa.css).
@@ -132,6 +137,21 @@ test/tata.test.js       Tests de la lógica con reloj simulado.
      - Cuánto tarda la primera generación (el timeout es de 300 s).
    - **Licencia:** VoiceStudio es AGPL-3.0. Tata solo lo llama por HTTP, pero si se modifica y se ofrece por red, hay que publicar esos cambios.
    - **Para pasarlo a `main`:** cuando la prueba real dé bien, `git switch main && git merge dev`.
+
+## Ideas propuestas (sin hacer todavía)
+
+Ordenadas por impacto para la persona mayor y la familia:
+
+1. **Portarretrato.** Cuando Tata no está hablando, la pantalla de la casa muestra fotos que sube la familia. Le da a la tablet un motivo para estar a la vista y encendida, y acerca a la familia todos los días.
+2. **"Tata, poné la radio".** Radios en vivo por streaming (por ejemplo Cadena 3 o Mitre Córdoba), elegidas por la familia en Ajustes. Es compañía, y es de lo que más usa una persona mayor un parlante inteligente.
+3. **Registro de "no entendí".** En la app de la familia, una lista de las frases que Tata no entendió. Sirve para mejorar las reglas y es la métrica clave del piloto (paso 2).
+4. **Modo noche.** De noche la pantalla se apaga y Tata no habla, salvo SOS y lo que le pregunten. Evita que despierte a la persona con un recordatorio o una luz fuerte.
+5. **Cambiar la zona horaria y los horarios desde Ajustes** (inactividad, resumen, teléfono de emergencia). La API ya lo soporta; falta la pantalla.
+
+## Ramas
+
+- `main`: lo estable. Voz del familiar solo con Chatterbox.
+- `dev`: VoiceStudio como motor de voz principal, con Chatterbox de respaldo. Pendiente de prueba real (paso 9). Para pasarlo a `main`: `git switch main && git merge dev`.
 
 ## Cómo seguir con Claude Code en tu terminal
 

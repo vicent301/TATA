@@ -361,6 +361,11 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
       if (!hh) throw new HttpError(404, 'Código incorrecto');
       const t = token();
       q.run('UPDATE households SET device_token = ?, device_code = ? WHERE id = ?', t, freeCode(), hh.id);
+      // La tablet está en la casa: su zona horaria manda sobre la del celular que creó el hogar.
+      const tz = str(b.timezone, 60);
+      if (tz && tz !== hh.timezone) {
+        try { new Intl.DateTimeFormat('es', { timeZone: tz }); q.run('UPDATE households SET timezone = ? WHERE id = ?', tz, hh.id); } catch {}
+      }
       core.send(hh.id, 'device', { type: 'unpaired' }); // si había otro dispositivo, queda desvinculado
       core.notify(hh, 'info', 'Tata quedó vinculada', `El dispositivo de ${hh.elder_name} ya está conectado.`);
       return [200, { token: t, elder_name: hh.elder_name }];
