@@ -444,3 +444,76 @@ test('prepareDay: guarda clima y noticia; sin Claude, solo el clima', async () =
   d = t.q.get("SELECT * FROM days WHERE household_id = ? AND date = '2026-10-19'", t.hid);
   assert.deepEqual([d.news, d.weather, d.prepared], ['', '', 1]);
 });
+
+// ---------- La mañana: el resumen va después de que ella habla ----------
+function morningSetup(at = '2026-10-19T09:00:00-03:00') {
+  const t = setup(at);
+  live(t);
+  act(t, { title: 'Tejido', place: 'Centro vecinal', address: 'Av. Siempreviva 742' });
+  t.q.run("INSERT INTO reminders (household_id, label, say, at, is_med) VALUES (?, 'Pastilla de la presión', 'la pastilla de la presión', 510, 1)", t.hid);
+  t.core.day(t.hh(), '2026-10-19');
+  t.q.run("UPDATE days SET weather = 'Hoy va a estar soleado, con una máxima de 24 grados.', news = '', prepared = 1 WHERE household_id = ?", t.hid);
+  return t;
+}
+const briefed = t => t.q.get("SELECT briefed FROM days WHERE household_id = ? AND date = '2026-10-19'", t.hid).briefed;
+
+test('mañana: después de la primera respuesta suma pastilla, clima y actividad, una sola vez', async () => {
+  const t = morningSetup();
+  assert.match(await t.hear('qué hora es'),
+    /^Son las .* Buen día, Elsa\. Te toca la pastilla de la presión\. Hoy va a estar soleado.* Hoy a las 17 hay Tejido en Centro vecinal\. ¿Te interesa\?$/);
+  assert.ok(briefed(t));
+  await t.hear('no');
+  assert.doesNotMatch(await t.hear('qué hora es'), /Buen día/);
+});
+
+test('mañana: fuera de la ventana de 6 a 13 no hay resumen', async () => {
+  const t = morningSetup('2026-10-19T14:00:00-03:00');
+  assert.doesNotMatch(await t.hear('qué hora es'), /Te toca|Tejido/);
+  assert.equal(briefed(t), null);
+});
+
+test('mañana: si lo primero es un pedido de ayuda, no hay resumen y el SOS sale igual', async () => {
+  const t = morningSetup();
+  const r = await t.hear('me caí, ayuda');
+  assert.match(r, /Ya le avisé a tu familia/);
+  assert.doesNotMatch(r, /Tejido|Buen día/);
+  assert.equal(briefed(t), null);
+});
+
+test('actividad: con sí, Tata da los datos y la familia se entera', async () => {
+  const t = morningSetup();
+  await t.hear('qué hora es');
+  assert.match(await t.hear('sí'), /Av\. Siempreviva 742/);
+  assert.equal(t.events().at(-1).title, 'A Elsa le interesó una actividad');
+  assert.match(await t.hear('dónde es'), /Av\. Siempreviva 742/);
+});
+
+test('actividad: con no, no se la vuelve a ofrecer para ese día', async () => {
+  const t = morningSetup();
+  await t.hear('qué hora es');
+  await t.hear('no');
+  assert.match(await t.hear('qué hay para hacer'), /^Mañana a las 17 hay Tejido/);
+});
+
+test('noticias a pedido: la del día, o el clima, o que no hay', async () => {
+  const t = morningSetup('2026-10-19T14:00:00-03:00');
+  assert.equal(await t.hear('contame una noticia'), 'Hoy va a estar soleado, con una máxima de 24 grados.');
+  t.q.run("UPDATE days SET news = 'Talleres ganó el clásico, Elsa.'");
+  assert.equal(await t.hear('contame una noticia'), 'Talleres ganó el clásico, Elsa.');
+  t.q.run("UPDATE days SET news = '', weather = ''");
+  assert.equal(await t.hear('qué hay de nuevo'), 'Hoy no tengo novedades para contarte.');
+});
+
+test('Claude recibe los intereses, las actividades cerca y la novedad del día', async () => {
+  const t = morningSetup('2026-10-19T14:00:00-03:00');
+  t.q.run("INSERT INTO interests (household_id, text) VALUES (?, 'Tango')", t.hid);
+  t.q.run("UPDATE days SET news = 'Talleres ganó el clásico, Elsa.'");
+  const { ai, calls } = fakeClaude([text('Qué lindo, Elsa.')]);
+  t.core.ai = ai;
+  await t.hear('estuve pensando en mi juventud cuando bailaba en el club');
+  const ctx = calls[0].messages.at(-1).content;
+  assert.match(ctx, /\[Contexto\] Le interesa: Tango\./);
+  assert.match(ctx, /\[Contexto\] Actividades cerca: hoy 17:00 Tejido en Centro vecinal/);
+  assert.match(ctx, /\[Contexto\] Novedad de hoy: Talleres ganó el clásico/);
+  assert.match(calls[0].system, /nunca inventes otras/);
+});
