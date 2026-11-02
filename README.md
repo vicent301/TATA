@@ -36,6 +36,36 @@ PORT=4321 npm start            # macOS / Linux
 
 No hace falta configurar la zona horaria. Al crear el hogar se toma la del celular, y cuando se vincula la tablet se corrige con la de la casa.
 
+### Probar con datos de ejemplo
+
+Para ver todo andando sin cargar nada a mano:
+
+1. Copiá `.env.example` como `.env` y completá `GEMINI_API_KEY` (gratis, ver "Charla con IA"). `ORBITA_KEY` ya viene con `orbita-demo`.
+2. Con el servidor apagado, cargá los datos y después arrancalo:
+
+```bash
+npm run demo       # carga el hogar de demo y la cartelera; imprime los links
+npm start
+```
+
+`npm run demo` se puede correr las veces que quieras (no duplica nada) y deja:
+
+- **Hogar "Elsa (demo)"** en Alta Córdoba, con Laura (hija, administradora) y Marta (vecina) como contactos, la pastilla de la presión a las 9, la vitamina D a las 13, un turno con la cardióloga en dos días e intereses: tejido, tango, Talleres y recetas.
+- **Cartelera de Encuentro en Córdoba:** 7 actividades (tejido, tango, gimnasia, cocina, el partido de Talleres de mañana, memoria y coro), en distintos barrios y días.
+- En la consola, **el link de Laura** para la app de la familia y **el código de la tablet** (`123456` si está libre).
+
+Cosas para probar:
+
+| Dónde | Qué hacer | Qué tiene que pasar |
+|---|---|---|
+| `/casa/` (código del demo) | Decí "Tata, buen día" a la mañana | Te saluda, te recuerda la pastilla si no la tomaste y te sugiere una actividad de hoy |
+| `/casa/` | "Tata, ¿qué actividades hay?" | Te cuenta lo que hay hoy o mañana cerca, primero Alta Córdoba |
+| `/casa/` | "Tata, contame una receta de budín" | Charla con la IA |
+| `/casa/` | "Tata, avisale a Laura que llegué bien" | A Laura le llega el mensaje en la app |
+| `/casa/` | Mantené apretado el botón y después decí "estoy bien" | Sale el SOS a la familia y después se cierra solo |
+| Link de Laura | Pestaña **Encuentro** | Ve la cartelera cerca de Elsa y qué le interesó |
+| `/orbita/` (clave `orbita-demo`) | Cargá, editá o pausá una actividad | Aparece o desaparece de lo que Tata sugiere |
+
 > El micrófono y las notificaciones solo funcionan en `localhost` o con **HTTPS**. Para probar con una tablet o un celular reales hay que publicarlo (ver abajo) o usar un túnel: `npx localtunnel --port 3000` o `cloudflared tunnel --url http://localhost:3000`.
 
 ## La pantalla de la casa
@@ -79,13 +109,13 @@ Tata es parte de **Órbita**, la alianza entre Tata y **Encuentro**: además de 
 - **La familia carga en Ajustes dónde vive** (ciudad y barrio) **y qué le interesa** ("Talleres", "tango", "recetas"). En la pestaña **Encuentro** ve lo que hay cerca y lo que a ella le interesó.
 - **El resumen de la mañana:** la primera vez que ella le habla a Tata entre las 6 y las 13, Tata le contesta y suma, si hay, la pastilla pendiente, el clima o una noticia liviana, y una actividad de su ciudad ("Hoy a las 17 hay taller de tejido en el centro vecinal. ¿Te interesa?"). Tata nunca arranca a hablar sola para esto, para no asustarla.
 - **Actividades:** primero las de su barrio, después las que coinciden con sus intereses, después la más próxima; solo de hoy o mañana. Si dice que sí, Tata le da los datos y la familia recibe un aviso. Si dice que no, no insiste.
-- **Noticias:** solo de sus intereses y temas livianos, nunca policiales, tragedias, política ni estafas. Salen del RSS de Google Noticias y las elige Claude, así que **necesitan `ANTHROPIC_API_KEY`**; sin ella, Tata solo da el clima. El clima es de [Open-Meteo](https://open-meteo.com), gratis y sin claves. Si algo falla, ese día no hay noticia: nunca se inventa.
+- **Noticias:** solo de sus intereses y temas livianos, nunca policiales, tragedias, política ni estafas. Salen del RSS de Google Noticias y las elige la IA, así que **necesitan `GEMINI_API_KEY` o `ANTHROPIC_API_KEY`**; sin ninguna, Tata solo da el clima. El clima es de [Open-Meteo](https://open-meteo.com), gratis y sin claves. Si algo falla, ese día no hay noticia: nunca se inventa.
 
 ```powershell
-$env:ORBITA_KEY="una-clave-larga"; npm start     # y entrá a http://localhost:3000/orbita/
+ORBITA_KEY=una-clave-larga         # en el .env; después npm start y entrá a http://localhost:3000/orbita/
 ```
 
-## Charla con Claude (opcional)
+## Charla con IA (opcional)
 
 SOS, pastillas, turnos y llamadas siguen siendo reglas fijas y testeables. Lo que esas reglas no entienden lo charla Claude (`server/ai.js`): preguntas generales y compañía. También puede avisarle algo a un familiar, anotar un recordatorio, recordar cosas que ella cuenta o disparar el SOS si detecta una urgencia.
 
@@ -97,6 +127,14 @@ ANTHROPIC_API_KEY=sk-ant-... npm start             # macOS / Linux
 ```
 
 Sin la clave, Tata funciona solo con las reglas: si le hablan de otra cosa, dice que no entendió. `TATA_MODEL` cambia el modelo (por defecto `claude-opus-5-5`).
+
+**Gratis, con Gemini:** sacá una clave en [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (sin tarjeta) y guardala en un archivo `.env` en la raíz del proyecto (ya está en `.gitignore`; `npm start` lo lee solo):
+
+```
+GEMINI_API_KEY=tu-clave
+```
+
+Usa `gemini-flash-lite-latest` (rápido y menos saturado que el flash común) (cambiable con `TATA_MODEL`). El plan gratis tiene límite diario de pedidos, de sobra para probar y para la demo. También sirve cualquier API compatible con OpenAI (Groq, Ollama local…) con `AI_BASE_URL`, `AI_API_KEY` y `TATA_MODEL`; el adaptador está en `server/openai-compat.js`. Si hay `ANTHROPIC_API_KEY`, gana Claude.
 
 ## La voz del familiar (opcional, gratis y local)
 
@@ -132,7 +170,10 @@ Es un solo proceso Node con una base SQLite en `data/tata.db`. Sirve cualquier h
 | `VAPID_SUBJECT` | `mailto:` de contacto para el servicio de push |
 | `ANTHROPIC_API_KEY` | Activa la charla con Claude y las noticias de la mañana |
 | `ORBITA_KEY` | Clave del panel de Órbita (`/orbita/`). Sin ella, el panel está apagado |
-| `TATA_MODEL` | Modelo de Claude (por defecto `claude-opus-5-5`) |
+| `GEMINI_API_KEY` | Alternativa gratis a Claude: la charla y las noticias las hace Gemini |
+| `AI_BASE_URL` / `AI_API_KEY` | Otra API compatible con OpenAI (Groq, Ollama…); requiere `TATA_MODEL` |
+| `AI_REASONING` | `reasoning_effort` para esas APIs (con Gemini, por defecto `low`) |
+| `TATA_MODEL` | Modelo (por defecto `claude-opus-5-5`, o `gemini-flash-lite-latest` con Gemini) |
 | `VOZ_URL` | Dónde está el servicio de voz (por defecto `http://127.0.0.1:5005`) |
 
 El acceso es con links personales y un código de 6 dígitos para la tablet, sin contraseñas. Alcanza para un piloto, no para producción: ver "Seguridad para producción" en [HANDOFF.md](HANDOFF.md).

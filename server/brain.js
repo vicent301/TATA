@@ -93,6 +93,18 @@ function morning(core, hh, replies) {
   replies.push({ text: parts.join(' ') });
 }
 
+// "Estoy bien", "fue sin querer"... pero nunca si dice que NO está bien o nombra algo que le pasa.
+const OK_NOW = /\b(estoy bien|ya estoy bien|todo bien|fue sin querer|sin querer|me equivoque|falsa alarma|no pasa nada|no necesito ayuda|no hace falta|cancela(r)?( la ayuda| el aviso)?)\b/;
+const STILL_BAD = /\b(me duele|me cai|mareada|mareado|no puedo|sangre|ayuda ya|ayudame|socorro|auxilio|emergencia|me siento mal)\b/;
+const OOPS = /\b(sin querer|falsa alarma|me equivoque)\b/;
+function okNow(t, raw) {
+  if (!OK_NOW.test(t) || STILL_BAD.test(t)) return false;
+  // "No, estoy bien" cierra; "no estoy bien" no. Se mira con la puntuación original.
+  const low = String(raw).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (/\bno\s+(estoy|me siento)\s+bien/.test(low) && !OOPS.test(t)) return false;
+  return true;
+}
+
 async function respond(core, hh, raw) {
   const replies = [];
   const say = (text, extra = {}) => replies.push({ text, ...extra });
@@ -106,6 +118,15 @@ async function respond(core, hh, raw) {
   const set = c => core.setConvo(hh, c);
   const yes = /\b(si|dale|bueno|claro|ok|okey|por favor|obvio|bueno dale)\b/.test(t) && !/\bno\b/.test(t);
   const no = /\b(no|deja|despues|nada|todavia)\b/.test(t);
+
+  // --- 0. con el pedido de ayuda abierto, ella misma puede decir que está bien ---
+  if (core.sos(hh)?.state === 'open' && okNow(t, raw)) {
+    core.setSos(hh, null); set({});
+    core.activity(hh, 'Dijo que está bien');
+    core.notify(hh, 'ok', `${name} está bien`, `Le dijo a Tata: “${raw}”. El pedido de ayuda quedó cerrado.`, null, { push: true, tag: 'sos-' + hh.id });
+    say(`Qué alivio, ${name}. Ya le avisé a tu familia que estás bien.`);
+    return { replies };
+  }
 
   // --- 1. respuestas a una pregunta que hizo Tata ---
   if (convo.confirm && (yes || no)) {
@@ -323,6 +344,7 @@ export function uiState(core, hh) {
     const d = core.day(hh, now.date);
     if (d.check_asked && !d.first_activity) chips.push('Bien, Tata. Recién me levanto');
   }
+  if (sosNow?.state === 'open' && !convo.confirm) chips.unshift('Estoy bien');
   const guide = convo.guide ? { title: GUIDES[convo.guide.key].title, i: convo.guide.i, n: GUIDES[convo.guide.key].steps.length, text: GUIDES[convo.guide.key].steps[convo.guide.i] } : null;
   const upcoming = core.q.all(`SELECT r.label, r.at, rr.done_at FROM reminders r
     LEFT JOIN reminder_runs rr ON rr.reminder_id = r.id AND rr.date = ?

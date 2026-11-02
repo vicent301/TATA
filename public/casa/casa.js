@@ -137,8 +137,16 @@
   const loadVoices = () => { try { voices = speechSynthesis.getVoices(); } catch { voices = []; } };
   loadVoices(); try { speechSynthesis.onvoiceschanged = loadVoices; } catch {}
   function pickVoice() {
-    for (const p of ['es-ar', 'es-419', 'es-us', 'es-mx', 'es-es']) {
-      const v = voices.find(v => (v.lang || '').replace('_', '-').toLowerCase().startsWith(p));
+    const of = p => voices.filter(v => (v.lang || '').replace('_', '-').toLowerCase().startsWith(p));
+    const prefs = ['es-ar', 'es-419', 'es-us', 'es-mx', 'es-es'];
+    // Las voces neuronales ("Natural", "Online", como las de Edge) suenan mucho menos robóticas:
+    // primero cualquiera de esas en español, y recién después las comunes por acento.
+    for (const p of prefs) {
+      const v = of(p).find(v => /natural|online|neural/i.test(v.name));
+      if (v) return v;
+    }
+    for (const p of prefs) {
+      const v = of(p)[0];
       if (v) return v;
     }
     return voices.find(v => /^es/i.test(v.lang || '')) || null;

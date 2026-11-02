@@ -86,6 +86,34 @@ test('SOS por botón no se duplica', async () => {
   assert.equal(t.events().filter(e => e.kind === 'alert').length, 1);
 });
 
+test('SOS: ella misma puede cerrarlo diciendo que está bien, y la familia se entera', async () => {
+  const t = setup();
+  await sos(t.core, t.hh(), 'boton', null);
+  assert.ok(t.core.sos(t.hh()));
+  const r = await t.hear('No, estoy bien, fue sin querer');
+  assert.match(r, /Qué alivio/);
+  assert.equal(t.core.sos(t.hh()), null);
+  assert.deepEqual({ ...t.events().at(-1) }, { kind: 'ok', title: 'Elsa está bien' });
+  assert.ok(t.pushed.some(p => p.kind === 'ok'));
+});
+
+test('SOS: "no estoy bien" NO cierra el pedido de ayuda', async () => {
+  const t = setup();
+  await sos(t.core, t.hh(), 'boton', null);
+  await t.hear('no estoy bien');
+  assert.equal(t.core.sos(t.hh()).state, 'open');
+  await t.hear('estoy bien pero me duele el pecho');
+  assert.equal(t.core.sos(t.hh()).state, 'open');
+});
+
+test('con el SOS abierto, la casa ofrece el botón "Estoy bien"', async () => {
+  const t = setup();
+  await sos(t.core, t.hh(), 'boton', null);
+  await t.hear('no');  // no quiere llamar a emergencias
+  const { uiState } = await import('../server/brain.js');
+  assert.ok(uiState(t.core, t.hh()).chips.includes('Estoy bien'));
+});
+
 test('mañana sin actividad: primero pregunta, después avisa; si responde, avisa que está bien', async () => {
   const t = setup('2026-10-19T11:00:00-03:00');
   t.tick();

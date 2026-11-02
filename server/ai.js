@@ -7,8 +7,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import { spokenDate, spokenTime, fmtMin, parseHHMM, addDays, relativeDay } from './time.js';
 import { findContact, sos } from './brain.js';
 import { upcoming } from './encuentro.js';
+import { createOpenAiCompatClient, GEMINI_BASE_URL } from './openai-compat.js';
 
-const MODEL = process.env.TATA_MODEL || 'claude-opus-5-5';
+const DEFAULT_MODEL = 'claude-opus-5-5';
 const SESSION_IDLE_MS = 30 * 60_000;   // después de media hora sin charlar, arranca una charla nueva
 const SESSION_MAX_ROWS = 60;           // y también si la charla se hizo muy larga
 const MAX_STEPS = 4;                   // vueltas de herramientas por cada cosa que dice
@@ -57,8 +58,29 @@ const TOOLS = [
   })
 ];
 
-export function createAi({ apiKey = process.env.ANTHROPIC_API_KEY, client } = {}) {
+/**
+ * Elige el proveedor según las variables de entorno, en este orden:
+ * ANTHROPIC_API_KEY (Claude) · GEMINI_API_KEY (Gemini, gratis) · AI_BASE_URL (+ AI_API_KEY) para Groq, Ollama u otra API compatible con OpenAI.
+ */
+function pickProvider(env) {
+  if (env.ANTHROPIC_API_KEY) return { apiKey: env.ANTHROPIC_API_KEY };
+  if (env.GEMINI_API_KEY) {
+    const model = env.TATA_MODEL || 'gemini-flash-lite-latest';
+    return { model, client: createOpenAiCompatClient({ baseURL: GEMINI_BASE_URL, apiKey: env.GEMINI_API_KEY, model, reasoningEffort: env.AI_REASONING ?? 'low' }) };
+  }
+  if (env.AI_BASE_URL) {
+    const model = env.TATA_MODEL;
+    if (!model) { console.error('tata ai: con AI_BASE_URL hace falta TATA_MODEL'); return {}; }
+    return { model, client: createOpenAiCompatClient({ baseURL: env.AI_BASE_URL, apiKey: env.AI_API_KEY, model, reasoningEffort: env.AI_REASONING }) };
+  }
+  return {};
+}
+
+export function createAi({ env = process.env, ...opts } = {}) {
+  const picked = opts.client || 'apiKey' in opts ? opts : pickProvider(env);
+  const { apiKey, client } = picked;
   if (!client && !apiKey) return null;
+  const MODEL = picked.model || env.TATA_MODEL || DEFAULT_MODEL;
   const anthropic = client || new Anthropic({ apiKey, timeout: 25_000, maxRetries: 1 });
 
   function session(core, hh) {
@@ -87,7 +109,7 @@ export function createAi({ apiKey = process.env.ANTHROPIC_API_KEY, client } = {}
     const near = upcoming(core, hh, 2).slice(0, 4);
     const day = core.day(hh, now.date);
     return [
-      `[Contexto] Hoy es ${spokenDate(now.date)}, ${spokenTime(now.min).replace(/^Son las /, 'las ')}.`,
+      `[Contexto] Hoy es ${spokenDate(now.date)} (${now.date}), ${spokenTime(now.min).replace(/^Son las /, 'las ')}.`,
       meds.length ? `[Contexto] Recordatorios de hoy: ${meds.map(r => `${fmtMin(r.at)} ${r.label}${r.done_at ? ' (hecho)' : ''}`).join('; ')}.` : '',
       apts.length ? `[Contexto] Próximos turnos: ${apts.map(a => `${relativeDay(a.date, now.date)} ${fmtMin(a.at)} con ${a.what}`).join('; ')}.` : '',
       contacts.length ? `[Contexto] Contactos: ${contacts.map(c => `${c.name}${c.relation ? ` (${c.relation})` : ''}`).join(', ')}.` : '',
