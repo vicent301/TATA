@@ -205,19 +205,20 @@ async function respond(core, hh, raw) {
   if (brief && /(estoy bien|todo bien|\bbien\b|recien me levanto|amaneci bien)/.test(t)) { say(`Me alegro mucho, ${name}. Cualquier cosa, acá estoy.`); return { replies }; }
   if (brief && /gracias/.test(t)) { say(`De nada, ${name}. Para eso estoy.`); return { replies }; }
 
-  // Encuentro y novedades del día
-  if (/(que hay para hacer|alguna actividad|que puedo hacer hoy|actividades)/.test(t)) {
+  // Encuentro y novedades del día. Con Claude, solo para pedidos cortos: lo largo es charla.
+  const ask = !core.ai || t.split(' ').length <= 7;
+  if (ask && /(que hay para hacer|alguna actividad|que puedo hacer hoy|actividades)/.test(t)) {
     const p = pickActivity(core, hh);
     if (!p) { say('Hoy no tengo actividades cerca para sugerirte.'); return { replies }; }
     set({ ...convo, confirm: { kind: 'activity', id: p.a.id, date: p.date }, lastActivity: { id: p.a.id, date: p.date } });
     say(offerText(hh, p.a, p.date, now.date));
     return { replies };
   }
-  if (convo.lastActivity && /(donde es|a que hora es|cuanto sale|cuanto cuesta)/.test(t)) {
+  if (ask && convo.lastActivity && /(donde es|a que hora es|cuanto sale|cuanto cuesta)/.test(t)) {
     const a = core.q.get('SELECT * FROM activities WHERE id = ?', convo.lastActivity.id);
     if (a) { say(detailsText(a, convo.lastActivity.date, now.date)); return { replies }; }
   }
-  if (/(contame una noticia|que hay de nuevo|novedades|como va a estar el dia|como esta el dia|el clima)/.test(t)) {
+  if (ask && /(contame una noticia|que hay de nuevo|novedades|como va a estar el dia|como esta el dia|el clima)/.test(t)) {
     const day = core.day(hh, now.date);
     say(day.news || day.weather || 'Hoy no tengo novedades para contarte.');
     return { replies };

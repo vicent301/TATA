@@ -517,3 +517,14 @@ test('Claude recibe los intereses, las actividades cerca y la novedad del día',
   assert.match(ctx, /\[Contexto\] Novedad de hoy: Talleres ganó el clásico/);
   assert.match(calls[0].system, /nunca inventes otras/);
 });
+
+test('con Claude, una frase larga que nombra "actividades" o "el clima" sigue siendo charla', async () => {
+  const t = morningSetup('2026-10-19T14:00:00-03:00');
+  const { ai, calls } = fakeClaude([text('Te entiendo, Elsa.'), text('Sí, está pesado.')]);
+  t.core.ai = ai;
+  assert.equal(await t.hear('hoy la verdad que no tengo ganas de hacer ninguna de esas actividades'), 'Te entiendo, Elsa.');
+  assert.equal(await t.hear('me tiene cansada el clima de estos días tan húmedos'), 'Sí, está pesado.');
+  assert.equal(calls.length, 2);
+  assert.match(await t.hear('qué hay para hacer'), /Tejido/); // las frases cortas siguen yendo a la regla
+  assert.match(await t.hear('cómo va a estar el día'), /soleado/);
+});
