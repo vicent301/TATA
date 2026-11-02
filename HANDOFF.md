@@ -26,14 +26,14 @@ Este MVP lleva eso a dos apps reales conectadas a un servidor:
   - Habla con `speechSynthesis`.
   - Los audios grabados por la familia se graban con `MediaRecorder` y se guardan como BLOB en SQLite.
 - **Notificaciones**: Web Push con VAPID. Las claves se generan solas la primera vez y se guardan en la tabla `settings`. El service worker está en `public/familia/sw.js`.
-- **Tests**: `node:test` (`npm test`), con 19 tests de lógica y reloj simulado.
+- **Tests**: `node:test` (`npm test`), con 22 tests de lógica y reloj simulado.
 
 ## Decisiones tomadas (y por qué)
 
 1. **Web primero, sin hardware propio.** El "parlante" es una tablet o celular viejo en modo pantalla completa. Así se valida el producto sin fabricar nada. El parlante físico, que podría ser una Raspberry Pi con micrófono y botones, queda para después.
 2. **El cerebro vive en el servidor** (`server/brain.js`). La casa manda el texto que escuchó y recibe qué decir. El estado de la charla (preguntas pendientes, modo paso a paso) queda guardado en el hogar, así que sobrevive a recargas.
 3. **Reglas primero, Claude de respaldo.** SOS, pastillas, turnos y llamadas son reglas determinísticas y testeables (`server/brain.js`). Lo que no matchea ninguna regla va a Claude (`server/ai.js`), que charla y tiene 4 herramientas: avisar a un familiar, crear un recordatorio, recordar un dato y pedir ayuda (dispara el mismo SOS). Con Claude activo, las reglas de charla (saludos, "estoy bien", "me siento sola") solo aplican a frases de hasta 5 palabras. El historial con Claude es solo de agregar: tras 30 minutos sin charlar, o si falla, arranca una charla nueva.
-4. **La voz del familiar, con cuidado.** El familiar graba 10–30 s en la app (WAV, con consentimiento) y Chatterbox Multilingual (MIT, local, `voz/servidor.py`) genera sus mensajes y recordatorios con su voz. Tata siempre lo presenta ("Laura te dejó dicho"), lo que habla de plata o claves va con la voz de Tata (`server/voice.js`), y Claude nunca habla con voz clonada. Los audios grabados a mano siguen funcionando igual.
+4. **La voz del familiar, con cuidado.** El familiar graba 10–30 s en la app (WAV, con consentimiento) y un motor local genera sus mensajes y recordatorios con su voz: VoiceStudio (AGPL, app aparte, API en :3900) como principal y Chatterbox Multilingual (MIT, `voz/servidor.py`) de respaldo, o al revés con `VOZ_MOTOR=chatterbox`. En VoiceStudio cada voz es un perfil `tata-<hash>`, que se busca por nombre en cada mensaje (si se le pasa un id que no existe, habla con una voz genérica sin dar error) y se borra cuando el familiar borra o cambia su voz. Tata siempre lo presenta ("Laura te dejó dicho"), lo que habla de plata o claves va con la voz de Tata (`server/voice.js`), y Claude nunca habla con voz clonada. Los audios grabados a mano siguen funcionando igual.
 5. **Llamadas honestas.** Una web no puede hacer llamadas telefónicas. Cuando ella dice "llamá a Laura", Tata le manda un push a Laura ("quiere hablar con vos") y en la casa muestra un botón grande `tel:`. Ese botón funciona si el dispositivo tiene línea. Con emergencias pasa lo mismo: aviso a toda la familia y botón para llamar al 107, que se puede configurar.
 6. **Primero se le pregunta a ella.** Si a la mañana no hubo actividad, Tata pregunta "¿Cómo amaneciste?" y espera 15 minutos antes de avisar a la familia. Si después habla, la familia recibe "ya habló con Tata". La ventana de chequeo es de 3 horas desde la hora configurada.
 7. **Pastillas con seguimiento.** Tata recuerda a la hora configurada. Si no hay confirmación, pregunta de nuevo a los 30 minutos y avisa a la familia a la hora. Un recordatorio con más de 60 minutos de atraso, por ejemplo porque el servidor estuvo caído, no se dice.
@@ -73,7 +73,7 @@ Este MVP lleva eso a dos apps reales conectadas a un servidor:
   - Grabar voz.
   - Mandar mensajes que Tata dice en voz alta.
   - Ajustes y activación de push.
-- Tests: `npm test` da 19/19. Además se hizo una prueba de punta a punta en Chromium: crear hogar → vincular casa → SOS por voz → overlay en el celular → "voy en camino" → la casa muestra "Laura ya está en camino".
+- Tests: `npm test` da 22/22. Además se hizo una prueba de punta a punta en Chromium: crear hogar → vincular casa → SOS por voz → overlay en el celular → "voy en camino" → la casa muestra "Laura ya está en camino".
 
 **No probado todavía:**
 
@@ -117,7 +117,21 @@ test/tata.test.js       Tests de la lógica con reloj simulado.
 6. **Editar** recordatorios y turnos desde la app (hoy solo se pueden crear, pausar y borrar). El endpoint `PATCH` ya existe.
 7. **Más guías paso a paso**, cargables por la familia.
 8. **Hardware:** Raspberry Pi + micrófono de conferencia + botón SOS físico, corriendo la misma `/casa/` en modo kiosco.
-9. **VoiceStudio como motor de voz (en la rama `dev`).** El código está hecho y testeado, pero falta probarlo con voces reales. Detalles y pasos pendientes en el HANDOFF de esa rama.
+9. **Terminar VoiceStudio como motor de voz** (esta rama, `dev`; `main` sigue solo con Chatterbox).
+   - **Hecho:** `server/voice.js` usa VoiceStudio y cae a Chatterbox si falla. Crea, reusa y borra perfiles. Tiene 3 tests con fetch simulado (`npm test`).
+   - **Probado:** solo con fetch simulado. La API real de VoiceStudio se leyó del código fuente (`backend/api/routers/openai_compat.py` y `profiles.py`), sin llamarla nunca.
+   - **Pendiente en la compu de desarrollo:** VoiceStudio 0.5.7 está instalado (`%LOCALAPPDATA%\Programs\VoiceStudio`), pero falta que la app baje su entorno de Python (~9 GB en `%APPDATA%\VoiceStudio\runtime`; la primera vez se cortó por falta de espacio). Después hay que elegir un motor liviano (OmniVoice), porque la placa es una RTX 3050 de 4 GB.
+   - **Para probar:**
+     - Con VoiceStudio abierto, `curl http://127.0.0.1:3900/health` tiene que devolver `{"status":"ok"}`, y `/api/familia/me` tiene que mostrar `features.voice: true`.
+     - Grabar una voz en Ajustes y tocar probar.
+     - Confirmar que en VoiceStudio aparece un perfil `tata-…`.
+     - Borrar la voz y confirmar que el perfil desaparece.
+   - **A verificar en la prueba real:**
+     - Que `POST /profiles` acepte el WAV que graba la app.
+     - Que `language: "es"` suene bien en castellano rioplatense.
+     - Cuánto tarda la primera generación (el timeout es de 300 s).
+   - **Licencia:** VoiceStudio es AGPL-3.0. Tata solo lo llama por HTTP, pero si se modifica y se ofrece por red, hay que publicar esos cambios.
+   - **Para pasarlo a `main`:** cuando la prueba real dé bien, `git switch main && git merge dev`.
 
 ## Cómo seguir con Claude Code en tu terminal
 

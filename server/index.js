@@ -318,13 +318,17 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
       const mime = String(req.headers['content-type'] || '').split(';')[0];
       const wav = await readBody(req, 6 * 1024 * 1024);
       if (mime !== 'audio/wav' || wav.subarray(0, 4).toString('latin1') !== 'RIFF') bad('Tiene que ser un WAV');
+      const old = q.get('SELECT wav FROM voices WHERE member_id = ?', member.id);
+      if (old && !Buffer.from(old.wav).equals(wav)) voice?.forget(old.wav); // la muestra vieja no queda en el motor
       q.run('INSERT INTO voices (member_id, wav, consent_at) VALUES (?, ?, ?) ON CONFLICT(member_id) DO UPDATE SET wav = excluded.wav, consent_at = excluded.consent_at',
         member.id, wav, core.ts());
       return [200, { ok: true }];
     }],
     ['DELETE', '/api/familia/voice', (req, url) => {
       const { member } = authMember(req, url);
+      const old = q.get('SELECT wav FROM voices WHERE member_id = ?', member.id);
       q.run('DELETE FROM voices WHERE member_id = ?', member.id);
+      if (old) voice?.forget(old.wav);
       return [200, { ok: true }];
     }],
     ['POST', '/api/familia/voice/test', async (req, url, res) => {

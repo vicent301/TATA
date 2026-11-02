@@ -154,7 +154,7 @@ test('resumen de la noche con lo que hizo en el día', async () => {
 
 // ---------- Claude como respaldo (cliente simulado: no llama a la API) ----------
 import { createAi } from '../server/ai.js';
-import { risky } from '../server/voice.js';
+import { risky, createVoice } from '../server/voice.js';
 
 function fakeClaude(script) {
   const calls = [];
@@ -211,4 +211,58 @@ test('la voz clonada nunca se usa para plata, bancos o claves', () => {
   assert.ok(risky('Necesito tu clave del banco'));
   assert.ok(!risky('Paso a las 5 a tomar unos mates'));
   assert.ok(!risky('Acordate de la pastilla de la presión'));
+});
+
+// ---------- Servicio de voz: VoiceStudio primero, Chatterbox de respaldo (fetch simulado) ----------
+function fakeVoz({ studioUp = true, studioFails = false } = {}) {
+  const calls = [], profiles = [];
+  const ok = (body, type = 'application/json') => new Response(type === 'application/json' ? JSON.stringify(body) : body, { headers: { 'content-type': type } });
+  const fetchImpl = async (u, opts = {}) => {
+    const { origin, pathname } = new URL(u), method = opts.method || 'GET';
+    calls.push({ origin, method, path: pathname, body: opts.body });
+    if (origin === 'http://studio') {
+      if (!studioUp) throw new Error('ECONNREFUSED');
+      if (pathname === '/health') return ok({ status: 'ok' });
+      if (pathname === '/profiles' && method === 'GET') return ok(profiles);
+      if (pathname === '/profiles' && method === 'POST') { const p = { id: 'p' + (profiles.length + 1), name: opts.body.get('name') }; profiles.push(p); return ok(p); }
+      if (pathname.startsWith('/profiles/') && method === 'DELETE') { profiles.splice(profiles.findIndex(p => '/profiles/' + p.id === pathname), 1); return ok({}); }
+      if (pathname === '/v1/audio/speech') return studioFails ? new Response('boom', { status: 500 }) : ok('WAV-STUDIO', 'audio/wav');
+    }
+    if (origin === 'http://chatter') {
+      if (pathname === '/health') return ok({ ok: true });
+      if (pathname === '/tts') return ok('WAV-CHATTER', 'audio/wav');
+    }
+    return new Response('', { status: 404 });
+  };
+  return { voice: createVoice({ engine: 'voicestudio', url: 'http://chatter', studioUrl: 'http://studio', fetchImpl }), calls, profiles };
+}
+const muestra = Buffer.from('RIFF....WAVEmuestra de Laura');
+
+test('VoiceStudio: crea el perfil del familiar una sola vez y lo reusa', async () => {
+  const v = fakeVoz();
+  assert.ok(await v.voice.check());
+  assert.equal(String(await v.voice.speak('Paso a las 5', muestra)), 'WAV-STUDIO');
+  assert.equal(String(await v.voice.speak('Te quiero, ma', muestra)), 'WAV-STUDIO');
+  assert.equal(v.profiles.length, 1);
+  assert.match(v.profiles[0].name, /^tata-[0-9a-f]{16}$/); // sin el nombre del familiar
+  const speech = v.calls.filter(c => c.path === '/v1/audio/speech').map(c => JSON.parse(c.body));
+  assert.deepEqual(speech.map(s => [s.voice, s.language, s.response_format]), [['p1', 'es', 'wav'], ['p1', 'es', 'wav']]);
+  assert.ok(!v.calls.some(c => c.origin === 'http://chatter' && c.path === '/tts'));
+});
+
+test('si VoiceStudio falla o no está, la voz sale por Chatterbox', async () => {
+  const orig = console.error; console.error = () => {};
+  try {
+    assert.equal(String(await fakeVoz({ studioFails: true }).voice.speak('Paso a las 5', muestra)), 'WAV-CHATTER');
+    const caido = fakeVoz({ studioUp: false });
+    assert.ok(await caido.voice.check());
+    assert.equal(String(await caido.voice.speak('Paso a las 5', muestra)), 'WAV-CHATTER');
+  } finally { console.error = orig; }
+});
+
+test('cuando el familiar borra su voz, también se borra su perfil en VoiceStudio', async () => {
+  const v = fakeVoz();
+  await v.voice.speak('Paso a las 5', muestra);
+  await v.voice.forget(muestra);
+  assert.equal(v.profiles.length, 0);
 });
