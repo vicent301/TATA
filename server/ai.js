@@ -174,5 +174,42 @@ export function createAi({ apiKey = process.env.ANTHROPIC_API_KEY, client } = {}
     }
   }
 
-  return { reply, model: MODEL };
+  /**
+   * Elige como mucho una noticia liviana que coincida con sus intereses y la cuenta en una frase.
+   * Devuelve null si no hay ninguna adecuada o si la respuesta no es válida: nunca se inventa una noticia.
+   */
+  async function pickNews(interests, headlines) {
+    const list = headlines.map((h, i) => `${i + 1}. ${h.title}${h.source ? ` (${h.source})` : ''}`).join('\n');
+    try {
+      const res = await anthropic.beta.messages.create({
+        model: MODEL, max_tokens: 2000,
+        betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: NEWS_SCHEMA } },
+        system: NEWS_SYSTEM,
+        messages: [{ role: 'user', content: `Le interesa: ${interests.join(', ')}.\n\nTitulares de hoy:\n${list}` }]
+      });
+      if (res.stop_reason === 'refusal') return null;
+      const raw = res.content.find(b => b.type === 'text')?.text || '';
+      const frase = JSON.parse(raw)?.frase;
+      if (typeof frase !== 'string' || !frase.trim() || frase.trim().split(/\s+/).length > 25) return null;
+      return frase.trim();
+    } catch (e) {
+      if (!(e instanceof SyntaxError)) console.error('tata noticias', e?.status || '', e?.message || e);
+      return null;
+    }
+  }
+
+  return { reply, pickNews, model: MODEL };
 }
+
+const NEWS_SCHEMA = {
+  type: 'object',
+  properties: { frase: { anyOf: [{ type: 'string' }, { type: 'null' }] } },
+  required: ['frase'], additionalProperties: false
+};
+const NEWS_SYSTEM = `Elegís noticias para Tata, una compañera de voz de una persona mayor que vive sola en Argentina. Lo que elijas se lee en voz alta a la mañana.
+
+- Elegí como mucho una noticia que coincida con alguno de sus intereses y sea liviana o positiva.
+- Descartá policiales, accidentes, muertes, enfermedades, política, economía alarmante, estafas, guerras y catástrofes. Ante la duda, descartá.
+- Contala en una frase de hasta 25 palabras, en castellano rioplatense con voseo, sin inventar nada que no diga el titular.
+- Si ninguna sirve, respondé con frase en null.`;

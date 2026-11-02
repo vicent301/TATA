@@ -389,3 +389,58 @@ test('familia: ve lo que hay cerca y lo que le interesó', async () => {
     assert.deepEqual(me.encuentro.liked, []);
   } finally { await s.close(); }
 });
+
+// ---------- Noticias y clima ----------
+import { weatherLine, parseRss, prepareDay } from '../server/news.js';
+
+test('weatherLine: soleado, redondea, y la lluvia se dice', () => {
+  assert.equal(weatherLine({ code: 0, max: 24.4, min: 12 }), 'Hoy va a estar soleado, con una máxima de 24 grados.');
+  assert.match(weatherLine({ code: 61, max: 18.6, min: 10 }), /lluvia.*19 grados/);
+});
+
+test('parseRss: limpia CDATA, entidades y la fuente del título', () => {
+  const xml = `<rss><channel><item><title><![CDATA[Talleres gan&oacute; &quot;el clásico&quot; - La Voz]]></title><source url="x">La Voz</source></item>
+    <item><title>Receta de &amp;alfajores - Clarín</title><source url="y">Clarín</source></item></channel></rss>`;
+  assert.deepEqual(parseRss(xml), [{ title: 'Talleres ganó "el clásico"', source: 'La Voz' }, { title: 'Receta de &alfajores', source: 'Clarín' }]);
+});
+
+test('pickNews: una frase válida, o null si no hay, si no es JSON o si es muy larga', async () => {
+  const long = Array(30).fill('palabra').join(' ');
+  const { ai, calls } = fakeClaude([text('{"frase":"Talleres ganó el clásico, Elsa."}'), text('{"frase":null}'), text('no sé'), text(JSON.stringify({ frase: long }))]);
+  const h = [{ title: 'Talleres ganó el clásico', source: 'La Voz' }];
+  assert.equal(await ai.pickNews(['Talleres'], h), 'Talleres ganó el clásico, Elsa.');
+  assert.equal(await ai.pickNews(['Talleres'], h), null);
+  assert.equal(await ai.pickNews(['Talleres'], h), null);
+  assert.equal(await ai.pickNews(['Talleres'], h), null);
+  assert.equal(calls[0].tools, undefined);
+  assert.equal(calls[0].output_config.format.type, 'json_schema');
+  assert.match(calls[0].messages[0].content, /Talleres ganó el clásico/);
+});
+
+const fakeWeb = (u) => {
+  u = String(u);
+  if (u.includes('api.open-meteo.com')) return new Response(JSON.stringify({ daily: { weathercode: [0], temperature_2m_max: [24.4], temperature_2m_min: [12] } }));
+  if (u.includes('news.google.com')) return new Response('<rss><item><title>Talleres ganó el clásico - La Voz</title><source url="x">La Voz</source></item></rss>');
+  return new Response('', { status: 404 });
+};
+
+test('prepareDay: guarda clima y noticia; sin Claude, solo el clima', async () => {
+  const t = setup('2026-10-19T05:10:00-03:00');
+  t.q.run("UPDATE households SET city = 'Córdoba', lat = -31.4, lon = -64.18 WHERE id = ?", t.hid);
+  t.q.run("INSERT INTO interests (household_id, text) VALUES (?, 'Talleres')", t.hid);
+  t.core.ai = fakeClaude([text('{"frase":"Talleres ganó el clásico, Elsa."}')]).ai;
+  await prepareDay(t.core, t.hh(), { fetchImpl: async u => fakeWeb(u) });
+  let d = t.q.get("SELECT * FROM days WHERE household_id = ? AND date = '2026-10-19'", t.hid);
+  assert.deepEqual([d.news, d.weather, d.prepared], ['Talleres ganó el clásico, Elsa.', 'Hoy va a estar soleado, con una máxima de 24 grados.', 1]);
+
+  t.q.run('DELETE FROM days');
+  t.core.ai = null;
+  await prepareDay(t.core, t.hh(), { fetchImpl: async u => fakeWeb(u) });
+  d = t.q.get("SELECT * FROM days WHERE household_id = ? AND date = '2026-10-19'", t.hid);
+  assert.deepEqual([d.news, d.weather, d.prepared], ['', 'Hoy va a estar soleado, con una máxima de 24 grados.', 1]);
+
+  t.q.run('DELETE FROM days');
+  await prepareDay(t.core, t.hh(), { fetchImpl: async () => { throw new Error('sin red'); } });
+  d = t.q.get("SELECT * FROM days WHERE household_id = ? AND date = '2026-10-19'", t.hid);
+  assert.deepEqual([d.news, d.weather, d.prepared], ['', '', 1]);
+});
