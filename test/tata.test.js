@@ -4,6 +4,10 @@ import { openDb, q as makeQ } from '../server/db.js';
 import { createCore } from '../server/core.js';
 import { handle, sos } from '../server/brain.js';
 import { tickHousehold } from '../server/scheduler.js';
+import { DatabaseSync } from 'node:sqlite';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { rmSync } from 'node:fs';
 
 // Hogar de prueba en memoria, con un reloj que se puede mover a mano.
 function setup(start = '2026-10-19T08:55:00-03:00') {
@@ -211,4 +215,24 @@ test('la voz clonada nunca se usa para plata, bancos o claves', () => {
   assert.ok(risky('Necesito tu clave del banco'));
   assert.ok(!risky('Paso a las 5 a tomar unos mates'));
   assert.ok(!risky('Acordate de la pastilla de la presión'));
+});
+
+// ---------- Esquema: una base vieja suma lo nuevo ----------
+test('una base vieja suma las columnas nuevas sin perder datos', () => {
+  const file = join(tmpdir(), `tata-mig-${process.pid}-${Date.now()}.db`);
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE households (id INTEGER PRIMARY KEY, elder_name TEXT NOT NULL, timezone TEXT NOT NULL DEFAULT 'America/Argentina/Cordoba', device_code TEXT UNIQUE, device_token TEXT UNIQUE, device_phone TEXT, inactivity_on INTEGER NOT NULL DEFAULT 1, inactivity_at INTEGER NOT NULL DEFAULT 660, summary_on INTEGER NOT NULL DEFAULT 1, summary_at INTEGER NOT NULL DEFAULT 1260, emergency_phone TEXT NOT NULL DEFAULT '107', last_seen INTEGER, offline_alerted INTEGER NOT NULL DEFAULT 0, convo TEXT NOT NULL DEFAULT '{}', sos TEXT, created_at INTEGER NOT NULL);
+    CREATE TABLE days (household_id INTEGER NOT NULL, date TEXT NOT NULL, first_activity INTEGER, check_asked INTEGER, inact_alerted INTEGER NOT NULL DEFAULT 0, summary_sent INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (household_id, date));
+    INSERT INTO households (elder_name, created_at) VALUES ('Elsa', 0);`);
+  old.close();
+  const db = openDb(file);
+  const q = makeQ(db);
+  try {
+    assert.deepEqual({ ...q.get('SELECT elder_name, city, barrio FROM households') }, { elder_name: 'Elsa', city: '', barrio: '' });
+    q.run("INSERT INTO days (household_id, date, briefed, prepared, news, weather) VALUES (1, '2026-11-02', 1, 1, 'x', 'y')");
+    q.run("INSERT INTO activities (title, place, city, at, created_at) VALUES ('Tejido', 'Centro', 'Córdoba', 1020, 0)");
+    q.run("INSERT INTO interests (household_id, text) VALUES (1, 'tango')");
+    q.run("INSERT INTO activity_answers (household_id, activity_id, date, answer, ts) VALUES (1, 1, '2026-11-02', 'si', 0)");
+    openDb(file).close(); // reabrir no rompe: la migración es idempotente
+  } finally { db.close(); rmSync(file, { force: true }); rmSync(file + '-wal', { force: true }); rmSync(file + '-shm', { force: true }); }
 });
