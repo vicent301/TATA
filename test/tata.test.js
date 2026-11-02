@@ -298,3 +298,45 @@ test('Encuentro: cómo lo dice Tata, y la familia se entera si le interesa', () 
   assert.ok(t.pushed.some(p => p.title === 'A Elsa le interesó una actividad'));
   assert.equal(upcoming(t.core, t.hh(), 7).length, 7);
 });
+
+// ---------- Servidor HTTP de prueba ----------
+import { createApp } from '../server/index.js';
+async function serve(opts = {}) {
+  const app = createApp({ dbFile: ':memory:', withPush: false, ai: null, voice: null, ...opts });
+  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${app.server.address().port}`;
+  const call = (method, path, body, token) => fetch(url + path, {
+    method, headers: { ...(body ? { 'content-type': 'application/json' } : {}), ...(token ? { authorization: 'Bearer ' + token } : {}) },
+    body: body ? JSON.stringify(body) : undefined
+  }).then(async r => ({ status: r.status, body: await r.json().catch(() => null) }));
+  return { ...app, url, call, close: () => new Promise(r => app.server.close(r)) };
+}
+
+// ---------- Panel de Órbita ----------
+test('panel de Órbita: apagado sin clave y protegido con clave', async () => {
+  const off = await serve({ orbitaKey: '' });
+  try { assert.equal((await off.call('GET', '/api/orbita/activities', null, 'x')).status, 404); } finally { await off.close(); }
+  const on = await serve({ orbitaKey: 'k' });
+  try {
+    assert.equal((await on.call('GET', '/api/orbita/activities', null, 'x')).status, 401);
+    assert.equal((await on.call('GET', '/api/orbita/activities')).status, 401);
+  } finally { await on.close(); }
+});
+
+test('panel de Órbita: crea, lista, pausa y borra', async () => {
+  const s = await serve({ orbitaKey: 'k' });
+  try {
+    const a = { title: 'Taller de tejido', place: 'Centro vecinal', city: 'Córdoba', barrio: 'Alta Córdoba', at: '17:00', days: '24', tags: 'tejido' };
+    const c = await s.call('POST', '/api/orbita/activities', a, 'k');
+    assert.equal(c.status, 201);
+    const list = (await s.call('GET', '/api/orbita/activities', null, 'k')).body.activities;
+    assert.deepEqual([list.length, list[0].title, list[0].at, list[0].days], [1, 'Taller de tejido', 1020, '24']);
+    assert.equal((await s.call('PATCH', `/api/orbita/activities/${c.body.id}`, { active: false }, 'k')).status, 200);
+    assert.equal(s.q.get('SELECT active FROM activities WHERE id = ?', c.body.id).active, 0);
+    assert.equal((await s.call('DELETE', `/api/orbita/activities/${c.body.id}`, null, 'k')).status, 200);
+    assert.equal((await s.call('GET', '/api/orbita/activities', null, 'k')).body.activities.length, 0);
+    assert.equal((await s.call('POST', '/api/orbita/activities', { ...a, city: '' }, 'k')).status, 400);
+    assert.equal((await s.call('POST', '/api/orbita/activities', { ...a, days: '', date: '' }, 'k')).status, 400);
+    assert.equal((await s.call('POST', '/api/orbita/activities', { ...a, at: '25:00' }, 'k')).status, 400);
+  } finally { await s.close(); }
+});

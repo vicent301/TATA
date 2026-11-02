@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { join, normalize, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +21,8 @@ const bad = msg => { throw new HttpError(400, msg); };
 const str = (v, max = 200) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const bool = v => (v ? 1 : 0);
 
-export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', clock, withPush = true, ai = createAi(), voice = createVoice() } = {}) {
+export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', clock, withPush = true, ai = createAi(), voice = createVoice(),
+  orbitaKey = process.env.ORBITA_KEY || '', fetchImpl = globalThis.fetch } = {}) {
   const db = openDb(dbFile);
   const q = makeQ(db);
   const push = withPush ? createPush(q) : null;
@@ -49,6 +51,12 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
     const m = q.get('SELECT * FROM members WHERE token = ?', bearer(req, url));
     if (!m) throw new HttpError(401, 'No autorizado');
     return { member: m, hh: core.household(m.household_id) };
+  };
+  // Panel de Órbita: una sola clave compartida (ORBITA_KEY). Sin clave, el panel no existe.
+  const authOrbita = (req, url) => {
+    if (!orbitaKey) throw new HttpError(404, 'No existe');
+    const got = Buffer.from(bearer(req, url) || ''), want = Buffer.from(orbitaKey);
+    if (got.length !== want.length || !timingSafeEqual(got, want)) throw new HttpError(401, 'No autorizado');
   };
   const authDevice = (req, url) => {
     const t = bearer(req, url);
@@ -108,6 +116,27 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
     ui: uiState(core, hh)
   });
   const changed = hh => core.send(hh.id, 'all', { type: 'refresh' });
+
+  /** Campos de una actividad de la cartelera. Con `partial`, solo valida los que vienen (para PATCH). */
+  function activityFields(b, partial = false) {
+    const f = {};
+    const has = k => !partial || k in b;
+    for (const [k, max, required] of [['title', 80, 1], ['place', 80, 1], ['address', 120], ['city', 60, 1], ['barrio', 60], ['price', 40], ['phone', 30], ['tags', 120], ['note', 200]]) {
+      if (!has(k)) continue;
+      f[k] = str(b[k], max);
+      if (required && !f[k]) bad('Falta ' + { title: 'qué es', place: 'dónde', city: 'la ciudad' }[k]);
+    }
+    if (has('at')) { f.at = parseHHMM(b.at); if (f.at == null) bad('Hora inválida'); }
+    if (has('days') || has('date')) {
+      const date = b.date ? str(b.date, 10) : null;
+      if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) bad('Fecha inválida');
+      f.date = date;
+      f.days = date ? '' : str(b.days, 7).replace(/[^0-6]/g, '');
+      if (!f.date && !f.days) bad('Falta qué días o qué fecha');
+    }
+    if ('active' in b) f.active = bool(b.active);
+    return f;
+  }
 
   function reminderFields(b) {
     const label = str(b.label, 80); if (!label) bad('Falta qué es');
@@ -350,6 +379,32 @@ export function createApp({ dbFile = process.env.DB_FILE || 'data/tata.db', cloc
     }],
 
     // ----- dispositivo de la casa -----
+    // ----- Órbita: la cartelera de Encuentro -----
+    ['GET', '/api/orbita/activities', (req, url) => {
+      authOrbita(req, url);
+      return [200, { activities: q.all('SELECT * FROM activities ORDER BY active DESC, city, title') }];
+    }],
+    ['POST', '/api/orbita/activities', async (req, url) => {
+      authOrbita(req, url);
+      const f = activityFields(await readJson(req));
+      const r = q.run(`INSERT INTO activities (title, place, address, city, barrio, at, days, date, price, phone, tags, note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, f.title, f.place, f.address, f.city, f.barrio, f.at, f.days, f.date,
+        f.price, f.phone, f.tags, f.note, core.ts());
+      return [201, { id: Number(r.lastInsertRowid) }];
+    }],
+    ['PATCH', '/api/orbita/activities/:id', async (req, url, res, p) => {
+      authOrbita(req, url);
+      if (!q.get('SELECT 1 FROM activities WHERE id = ?', Number(p.id))) throw new HttpError(404, 'No existe');
+      const f = activityFields(await readJson(req), true);
+      for (const [k, v] of Object.entries(f)) q.run(`UPDATE activities SET ${k} = ? WHERE id = ?`, v, Number(p.id));
+      return [200, { ok: true }];
+    }],
+    ['DELETE', '/api/orbita/activities/:id', (req, url, res, p) => {
+      authOrbita(req, url);
+      q.run('DELETE FROM activities WHERE id = ?', Number(p.id));
+      return [200, { ok: true }];
+    }],
+
     ['POST', '/api/casa/pair', async req => {
       const b = await readJson(req);
       const code = str(b.code, 10).replace(/\D/g, '');
