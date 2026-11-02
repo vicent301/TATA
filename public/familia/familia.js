@@ -76,8 +76,21 @@
     $('#whoPill').textContent = name;
     document.title = `Tata · ${name}`;
     $('#msgTitle').textContent = `Mandarle un mensaje a ${name}`;
-    renderStatus(); renderOverlay(); renderToday(); renderFeed(); renderAgenda(); renderSettings(); renderVoice();
+    renderStatus(); renderOverlay(); renderToday(); renderFeed(); renderAgenda(); renderEncuentro(); renderSettings(); renderVoice();
   }
+
+  // ---------- Encuentro: actividades cerca y las que le interesaron ----------
+  function renderEncuentro() {
+    const E = D.encuentro, today = D.now.date;
+    const when = (date, at) => `${date === today ? 'Hoy' : nice(date)} · ${at}`;
+    $('#encNoCity').hidden = !!D.household.city;
+    $('#encUpcoming').innerHTML = E.upcoming.length ? E.upcoming.map(a => `<li><span class="tx">${esc(a.title)}
+        <small>${esc(when(a.date, a.at))} · ${esc(a.place)}${a.address ? ', ' + esc(a.address) : ''}${a.price ? ' · ' + esc(a.price) : ''}</small></span></li>`).join('')
+      : `<li class="empty">${D.household.city ? 'Esta semana no hay actividades cargadas en su ciudad.' : 'Sin ciudad cargada todavía.'}</li>`;
+    $('#encLiked').innerHTML = E.liked.length ? E.liked.map(a => `<li><span class="tx">${esc(a.title)}<small>${esc(when(a.date, a.at))} · ${esc(a.place)}</small></span></li>`).join('')
+      : `<li class="empty">Cuando ${esc(D.household.elder_name)} diga que le interesa una actividad, aparece acá.</li>`;
+  }
+  $('#encGoSettings').addEventListener('click', () => setTab('ajustes'));
 
   function renderStatus() {
     const H = D.household, name = H.elder_name, s = D.sos;
@@ -367,6 +380,8 @@
     const others = D.contacts.filter(c => !c.member_id);
     $('#contactList').innerHTML = others.length ? others.map(c => `<li><span class="tx">${esc(c.name)}<small>${esc(c.relation || 'contacto')}${c.phone ? ' · ' + esc(c.phone) : ' · sin teléfono'}</small></span><button class="icon" type="button" title="Borrar" data-contact-del="${c.id}">✕</button></li>`).join('')
       : '<li class="empty">Tata puede llamar o mandarle mensajes a quien cargues acá.</li>';
+    $('#interestList').innerHTML = D.interests.map(i => `<li class="chip">${esc(i.text)}<button type="button" title="Sacar" aria-label="Sacar ${esc(i.text)}" data-interest-del="${i.id}">✕</button></li>`).join('');
+    $('#interestForm').hidden = D.interests.length >= 12;
 
     if (!settingsFilled) {
       settingsFilled = true;
@@ -375,6 +390,7 @@
       f.summary_on.checked = H.summary_on; f.summary_at.value = H.summary_at;
       f.elder_name.value = H.elder_name; f.emergency_phone.value = H.emergency_phone; f.device_phone.value = H.device_phone || '';
       const m = $('#meForm'); m.phone.value = D.me.phone || ''; m.gets_alerts.checked = D.me.gets_alerts;
+      const w = $('#whereForm'); w.city.value = H.city || ''; w.barrio.value = H.barrio || '';
     }
     renderPush();
   }
@@ -385,6 +401,22 @@
         elder_name: f.elder_name.value, emergency_phone: f.emergency_phone.value, device_phone: f.device_phone.value });
       $('#hhSaved').textContent = '✓ Guardado'; setTimeout(() => { $('#hhSaved').textContent = ''; }, 3000); load();
     } catch (x) { $('#hhSaved').textContent = x.message; }
+  });
+  $('#whereForm').addEventListener('submit', async e => {
+    e.preventDefault(); const f = e.target;
+    try {
+      await patch('/api/familia/household', { city: f.city.value, barrio: f.barrio.value });
+      $('#whereSaved').textContent = '✓ Guardado'; setTimeout(() => { $('#whereSaved').textContent = ''; }, 3000); load();
+    } catch (x) { $('#whereSaved').textContent = x.message; }
+  });
+  $('#interestForm').addEventListener('submit', async e => {
+    e.preventDefault(); const f = e.target;
+    try { await post('/api/familia/interests', { text: f.text.value }); f.reset(); load(); }
+    catch (x) { toast(x.message); }
+  });
+  $('#interestList').addEventListener('click', async e => {
+    const b = e.target.closest('[data-interest-del]');
+    if (b) { await del('/api/familia/interests/' + b.dataset.interestDel).catch(x => toast(x.message)); load(); }
   });
   $('#meForm').addEventListener('submit', async e => {
     e.preventDefault(); const f = e.target;

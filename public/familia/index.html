@@ -86,6 +86,19 @@
     </details>
   </section>
 
+  <!-- ENCUENTRO -->
+  <section class="screen big" data-tab="encuentro" hidden>
+    <div class="card" id="encNoCity" hidden>
+      <p style="margin:0 0 10px">Cargá en Ajustes dónde vive para ver actividades cerca.</p>
+      <button class="btn primary" type="button" id="encGoSettings">Ir a Ajustes</button>
+    </div>
+    <h4>Lo que hay cerca</h4>
+    <p class="hint">Tata se las sugiere cuando charlan. Si a ella le interesa una, te avisamos.</p>
+    <ul class="rows" id="encUpcoming"></ul>
+    <h4>Lo que le interesó</h4>
+    <ul class="rows" id="encLiked"></ul>
+  </section>
+
   <!-- AJUSTES -->
   <section class="screen" data-tab="ajustes" hidden>
     <h4>Notificaciones en este celular</h4>
@@ -107,6 +120,26 @@
       <label>Teléfono de su casa o su celular (para el botón “Llamar”)<input name="device_phone" maxlength="30" inputmode="tel"></label>
       <div class="row"><button class="btn primary" type="submit">Guardar</button><span class="hint" id="hhSaved"></span></div>
     </form>
+
+    <h4>Dónde vive</h4>
+    <form class="card form big" id="whereForm">
+      <div class="two">
+        <label>Ciudad<input name="city" maxlength="60" placeholder="Córdoba"></label>
+        <label>Barrio<input name="barrio" maxlength="60" placeholder="Alta Córdoba"></label>
+      </div>
+      <p class="hint">Con esto Tata le sugiere actividades cerca y le cuenta el clima.</p>
+      <div class="row"><button class="btn primary" type="submit">Guardar</button><span class="hint" id="whereSaved"></span></div>
+    </form>
+
+    <h4>Le interesa</h4>
+    <div class="card form big">
+      <p class="hint">Temas para charlar y para las noticias de la mañana. Solo cosas lindas: Tata nunca le cuenta malas noticias.</p>
+      <ul class="chips" id="interestList"></ul>
+      <form class="row" id="interestForm">
+        <input name="text" maxlength="40" placeholder="Talleres, tango, recetas…" aria-label="Nuevo interés" required>
+        <button class="btn" type="submit">Agregar</button>
+      </form>
+    </div>
 
     <h4>Familia (reciben avisos)</h4>
     <ul class="rows" id="memberList"></ul>
@@ -152,6 +185,7 @@
   <nav class="tabs" role="tablist">
     <button type="button" role="tab" data-tab="hoy" aria-selected="true"><i></i>Hoy</button>
     <button type="button" role="tab" data-tab="agenda" aria-selected="false"><i></i>Agenda</button>
+    <button type="button" role="tab" data-tab="encuentro" aria-selected="false"><i></i>Encuentro</button>
     <button type="button" role="tab" data-tab="ajustes" aria-selected="false"><i></i>Ajustes</button>
   </nav>
 
